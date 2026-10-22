@@ -14,10 +14,12 @@ import numpy as np
 import yaml
 
 from llm.advisor import Advisor, MockBackend
+from mapping.board_map import BoardMap, scale_transform
 from rules.engine import RuleEngine
 
 CFG = yaml.safe_load(open("config.yaml", encoding="utf-8"))
 RULES = RuleEngine(str(Path(CFG["paths"]["kb_dir"]) / "acceptance.yaml"))
+BOARD = BoardMap("kb/board_sample", scale_transform(0.05))  # real board: kb/board_demo + calibrated transform
 ADVISOR = Advisor(MockBackend(), kb_dir=CFG["paths"]["kb_dir"])  # Pi: swap in ExecuTorch backend
 
 
@@ -40,18 +42,14 @@ def align(img):
 # Contract: list of {type, conf, bbox[x1,y1,x2,y2], area_px}
 def detect(img):
     return [
-        {"type": "solder_bridge", "conf": 0.94, "bbox": [312, 210, 330, 224], "area_px": 252},
-        {"type": "tombstone", "conf": 0.88, "bbox": [120, 80, 140, 96], "area_px": 210},
+        {"type": "solder_bridge", "conf": 0.94, "bbox": [348, 292, 356, 308], "area_px": 128},
+        {"type": "tombstone", "conf": 0.88, "bbox": [680, 190, 720, 210], "area_px": 800},
     ]
 
 
-# 4. Board mapping  [STUB - Person 1, real: pick-and-place + netlist]
+# 4. Board mapping  [REAL - mapping/board_map.py, sample board for now]
 def map_to_board(defects, H):
-    fake = [
-        {"refdes": "U3", "pins": [4, 5], "nets": ["3V3", "GND"], "package": "QFN-32"},
-        {"refdes": "R7", "pins": [1, 2], "nets": ["VOUT", "FB"], "package": "R_0603"},
-    ]
-    return [{**d, **fake[i % len(fake)]} for i, d in enumerate(defects)]
+    return BOARD.annotate(defects)
 
 
 # 5. Rule engine  [REAL - rules/engine.py + kb/acceptance.yaml]

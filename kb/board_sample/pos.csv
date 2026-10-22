@@ -1,0 +1,5 @@
+Ref,Val,Package,PosX,PosY,Rot,Side
+U3,STM32G030,QFN-32_5x5mm_P0.5mm,20.0,15.0,0,top
+R7,10k,R_0603_1608Metric,35.0,10.0,0,top
+C4,100nF,C_0603_1608Metric,35.0,20.0,90,top
+D1,LED,LED_0805_2012Metric,8.0,25.0,0,top
