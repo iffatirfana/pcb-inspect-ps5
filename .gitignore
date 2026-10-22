@@ -227,3 +227,10 @@ models/tokenizer.model
 
 # Local inspection database
 db/*.sqlite
+
+# KiCad local files
+.history/
+*.lck
+*.kicad_prl
+*-backups/
+hardware/testboard/drc_report.txt
