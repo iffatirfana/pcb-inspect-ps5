@@ -71,7 +71,23 @@ def explain(defects):
     return {**advice.model_dump(), "source": source}
 
 
-# 7. UI  [STUB - real: Flask page]
+# 7. Output for UI  [REAL - draws boxes; ui/app.py shows it]
+COLORS = {"CRITICAL": (0, 0, 255), "MAJOR": (0, 140, 255), "MINOR": (0, 200, 0)}
+
+
+def draw(img, defects, path="results/last_inspection.png"):
+    out = img.copy()
+    for d in defects:
+        x1, y1, x2, y2 = d["bbox"]
+        c = COLORS.get(d.get("severity"), (255, 255, 0))
+        cv2.rectangle(out, (x1 - 6, y1 - 6), (x2 + 6, y2 + 6), c, 2)
+        cv2.putText(out, f"{d['refdes']} {d['type']}", (x1 - 6, max(12, y1 - 10)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, c, 1, cv2.LINE_AA)
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    cv2.imwrite(path, out)
+    return path
+
+
 def show(defects, advice):
     print(json.dumps({"defects": defects, "advice": advice}, indent=2))
 
@@ -89,7 +105,7 @@ def log(defects, advice, timings):
     con.close()
 
 
-def run_once():
+def run_once(verbose=True):
     t, timings = time.perf_counter(), {}
 
     def lap(name):
@@ -105,10 +121,14 @@ def run_once():
     defects = map_to_board(defects, H);  lap("mapping")
     defects = apply_rules(defects);      lap("rules")
     advice = explain(defects);           lap("llm")
-    show(defects, advice);               lap("ui")
+    image_path = draw(img, defects);     lap("draw")
+    timings["total"] = round(sum(timings.values()), 2)
     log(defects, advice, timings)
-    print("Board verdict:", advice["verdict"])
-    print("Stage timings (ms):", timings)
+    if verbose:
+        show(defects, advice)
+        print("Board verdict:", advice["verdict"])
+        print("Stage timings (ms):", timings)
+    return {"defects": defects, "advice": advice, "timings": timings, "image": image_path}
 
 
 if __name__ == "__main__":
