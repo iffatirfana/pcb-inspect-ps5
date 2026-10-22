@@ -1,0 +1,75 @@
+# Standard repair procedures referenced by kb/acceptance.yaml (sop_id).
+# Llama may rephrase these for the operator but must not add steps.
+
+SOP-BRIDGE-01:
+  title: Remove solder bridge
+  tools: [temperature-controlled iron, flux, desoldering braid, IPA, magnifier]
+  steps:
+    - Do not power the board.
+    - Apply flux over the bridged pins.
+    - Place clean desoldering braid on the bridge and heat with the iron until solder wicks away.
+    - Drag-touch each pin lightly with a clean tip if residue remains.
+    - Clean the area with IPA and inspect all pins of the component under magnification.
+  verify:
+    - Measure resistance between the two affected nets; it must not read as a short.
+    - Re-inspect the board on the station before release.
+
+SOP-REPLACE-01:
+  title: Remove and re-fit part with correct orientation
+  tools: [hot-air station or iron, tweezers, flux, solder, IPA, magnifier]
+  steps:
+    - Do not power the board.
+    - Remove the part using hot air or alternating iron heat.
+    - Clean the pads and apply fresh flux.
+    - Check pin-1 / polarity marking against the silkscreen and assembly drawing.
+    - Fit the part in the correct orientation and solder all joints.
+    - Replace the part with a new one if it may have been stressed or powered reversed.
+  verify:
+    - Confirm the orientation marking matches the silkscreen.
+    - Re-inspect the board on the station before release.
+
+SOP-PLACE-01:
+  title: Fit missing component
+  tools: [iron or hot-air station, tweezers, flux, solder, IPA]
+  steps:
+    - Confirm the correct part value and package from the BOM for this reference designator.
+    - Clean and flux the pads.
+    - Place the part, tack one terminal, check alignment, then solder the remaining terminals.
+    - Clean with IPA.
+  verify:
+    - Confirm the part value against the BOM.
+    - Re-inspect the board on the station before release.
+
+SOP-REFLOW-01:
+  title: Re-seat tombstoned or misaligned part
+  tools: [iron or hot-air station, tweezers, flux, solder, IPA, magnifier]
+  steps:
+    - Apply flux to all terminals of the part.
+    - Reflow the joints and gently align the part centrally on its pads with tweezers.
+    - Add a small amount of solder to any terminal without a proper fillet.
+    - Clean with IPA.
+  verify:
+    - Check every terminal has a proper fillet and no bridge to neighbouring pads.
+    - Re-inspect the board on the station before release.
+
+SOP-TOUCHUP-01:
+  title: Correct solder volume
+  tools: [iron, flux, solder, desoldering braid, IPA]
+  steps:
+    - For insufficient solder - add flux and a small amount of solder to form a proper fillet.
+    - For excess solder - add flux and remove surplus with desoldering braid.
+    - Clean with IPA.
+  verify:
+    - Joint shows a smooth concave fillet with no bridge.
+    - Re-inspect the board on the station before release.
+
+SOP-CLEAN-01:
+  title: Remove solder balls
+  tools: [tweezers or soft brush, IPA, magnifier]
+  steps:
+    - Lift loose solder balls with tweezers or a soft brush.
+    - Clean the area with IPA.
+    - Check nearby pads and traces for any remaining balls.
+  verify:
+    - No loose solder visible under magnification.
+    - Re-inspect the board on the station

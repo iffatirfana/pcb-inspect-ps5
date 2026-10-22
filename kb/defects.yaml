@@ -1,0 +1,65 @@
+# Defect definitions - used by the rule engine and fed to Llama as context.
+# Names MUST match classifier.classes in config.yaml.
+
+solder_bridge:
+  name: Solder bridge
+  description: Unwanted solder connecting two or more adjacent pads or pins.
+  visual: Shiny solder blob spanning the gap between neighbouring pins/pads.
+  typical_cause: Excess paste, stencil misalignment, insufficient pad spacing.
+  risk: Short circuit between nets; can damage regulators or ICs at power-up.
+
+missing_component:
+  name: Missing component
+  description: A component in the pick-and-place list is absent from its pads.
+  visual: Bare or tinned pads with no part on them.
+  typical_cause: Pick-up failure, feeder empty, part knocked off during handling.
+  risk: Circuit function missing or open; may affect power, decoupling or signals.
+
+tombstone:
+  name: Tombstone
+  description: A two-terminal chip part lifted on one end, standing upright.
+  visual: Resistor/capacitor standing on one pad, other pad empty.
+  typical_cause: Uneven heating or uneven paste volume between the two pads.
+  risk: Open circuit at that component.
+
+misalignment:
+  name: Component misalignment
+  description: Component shifted or rotated off its pads.
+  visual: Leads/terminals partly off the pads; part visibly rotated.
+  typical_cause: Placement offset, board vibration before reflow.
+  risk: Weak or open joints; possible bridge to neighbouring pads.
+
+wrong_polarity:
+  name: Wrong polarity / orientation
+  description: Polarised part (diode, LED, electrolytic, IC) placed the wrong way.
+  visual: Pin-1 dot or polarity marking not matching the silkscreen marker.
+  typical_cause: Reel loaded wrongly, manual placement error.
+  risk: Device non-functional or destroyed at power-up.
+
+insufficient_solder:
+  name: Insufficient solder
+  description: Joint has too little solder to form a proper fillet.
+  visual: Dull, thin or incomplete fillet; pad copper visible.
+  typical_cause: Low paste volume, blocked stencil aperture.
+  risk: Weak or intermittent joint; may fail under vibration or heat.
+
+excess_solder:
+  name: Excess solder
+  description: Joint has too much solder, ballooned fillet.
+  visual: Large convex solder mass around the lead.
+  typical_cause: Too much paste or rework solder.
+  risk: Hidden bridge risk; poor inspection of joint quality.
+
+solder_ball:
+  name: Solder ball
+  description: Small loose sphere of solder on the board surface.
+  visual: Tiny shiny round dot near pads or on solder mask.
+  typical_cause: Paste spatter, moisture in paste, fast reflow ramp.
+  risk: Can move and short adjacent conductors if near them.
+
+scratch:
+  name: Scratch / mask damage
+  description: Mechanical damage to solder mask or copper trace.
+  visual: Line or scuff exposing copper or fibre.
+  typical_cause: Handling, fixtures, tools.
+  risk: Exposed copper may corrode; cut trace causes an open circuit.

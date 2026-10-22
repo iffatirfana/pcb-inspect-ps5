@@ -1,0 +1,146 @@
+# Acceptance rules - deterministic PASS / REWORK / REJECT decisions.
+# Evaluated top to bottom; the FIRST matching rule wins.
+# Inspired by common IPC-A-610 concepts; not a compliance claim.
+#
+# package_class values (set from pick-and-place footprint names):
+#   fine_pitch_ic  - QFN, QFP, TSSOP, pitch <= 0.65 mm
+#   ic             - SOIC, SOT, other ICs
+#   chip_passive   - 0402/0603/0805/1206 resistors & capacitors
+#   polarized      - diodes, LEDs, electrolytic/tantalum caps
+#   connector      - headers, sockets, terminals
+#   any            - matches every package
+#
+# severity: CRITICAL > MAJOR > MINOR
+# verdict:  REJECT (scrap/escalate) | REWORK (repair) | PASS (accept, log only)
+
+rules:
+  - id: R01
+    defect: solder_bridge
+    package_class: any
+    condition: power_to_ground        # bridge joins a power net and GND
+    severity: CRITICAL
+    verdict: REWORK
+    sop_id: SOP-BRIDGE-01
+    note: Do not power the board until the bridge is removed and verified.
+
+  - id: R02
+    defect: solder_bridge
+    package_class: any
+    condition: different_nets         # bridge joins any two different nets
+    severity: MAJOR
+    verdict: REWORK
+    sop_id: SOP-BRIDGE-01
+
+  - id: R03
+    defect: solder_bridge
+    package_class: any
+    condition: same_net               # both pads on the same net
+    severity: MINOR
+    verdict: PASS
+    sop_id: null
+    note: Electrically harmless; log for process monitoring.
+
+  - id: R04
+    defect: wrong_polarity
+    package_class: any
+    condition: null
+    severity: CRITICAL
+    verdict: REWORK
+    sop_id: SOP-REPLACE-01
+    note: Do not power the board; reversed part may be damaged.
+
+  - id: R05
+    defect: missing_component
+    package_class: any
+    condition: null
+    severity: MAJOR
+    verdict: REWORK
+    sop_id: SOP-PLACE-01
+
+  - id: R06
+    defect: tombstone
+    package_class: chip_passive
+    condition: null
+    severity: MAJOR
+    verdict: REWORK
+    sop_id: SOP-REFLOW-01
+
+  - id: R07
+    defect: misalignment
+    package_class: fine_pitch_ic
+    condition: null
+    severity: MAJOR
+    verdict: REWORK
+    sop_id: SOP-REFLOW-01
+    note: High bridge risk on fine-pitch parts.
+
+  - id: R08
+    defect: misalignment
+    package_class: any
+    condition: null
+    severity: MINOR
+    verdict: REWORK
+    sop_id: SOP-REFLOW-01
+
+  - id: R09
+    defect: insufficient_solder
+    package_class: any
+    condition: null
+    severity: MAJOR
+    verdict: REWORK
+    sop_id: SOP-TOUCHUP-01
+
+  - id: R10
+    defect: excess_solder
+    package_class: fine_pitch_ic
+    condition: null
+    severity: MAJOR
+    verdict: REWORK
+    sop_id: SOP-TOUCHUP-01
+
+  - id: R11
+    defect: excess_solder
+    package_class: any
+    condition: null
+    severity: MINOR
+    verdict: PASS
+    sop_id: null
+
+  - id: R12
+    defect: solder_ball
+    package_class: any
+    condition: near_conductor         # within clearance of another pad/trace
+    severity: MAJOR
+    verdict: REWORK
+    sop_id: SOP-CLEAN-01
+
+  - id: R13
+    defect: solder_ball
+    package_class: any
+    condition: null
+    severity: MINOR
+    verdict: REWORK
+    sop_id: SOP-CLEAN-01
+
+  - id: R14
+    defect: scratch
+    package_class: any
+    condition: copper_exposed
+    severity: MAJOR
+    verdict: REJECT
+    sop_id: null
+    note: Escalate to engineer; possible cut trace.
+
+  - id: R15
+    defect: scratch
+    package_class: any
+    condition: null
+    severity: MINOR
+    verdict: PASS
+    sop_id: null
+
+default:
+  severity: MAJOR
+  verdict: REWORK
+  sop_id: null
+  note: No rule matched - send to manual inspection.
