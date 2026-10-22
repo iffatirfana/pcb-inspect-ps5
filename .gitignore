@@ -218,3 +218,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Large model files (stored on Hugging Face, not GitHub)
+models/*.pte
+models/*.hef
+models/*.onnx
+models/tokenizer.model
