@@ -224,3 +224,6 @@ models/*.pte
 models/*.hef
 models/*.onnx
 models/tokenizer.model
+
+# Local inspection database
+db/*.sqlite

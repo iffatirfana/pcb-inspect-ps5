@@ -1,0 +1,12 @@
+# PS5 pipeline - runtime dependencies (laptop + Raspberry Pi)
+numpy>=1.26,<3
+opencv-python-headless>=4.9
+pyyaml>=6.0
+pydantic>=2.6
+onnxruntime>=1.18
+huggingface_hub>=0.24
+psutil>=5.9
+flask>=3.0
+
+# LLM runtime (ExecuTorch Python runtime; match the version used for export)
+executorch==1.5.1

@@ -1,0 +1,45 @@
+# PS5 - PCB inspection pipeline configuration
+# Shared contract between all modules. Change only after telling the team.
+
+paths:
+  golden_image: kb/board_demo/golden.png
+  pick_and_place: kb/board_demo/pos.csv
+  netlist: kb/board_demo/netlist.net
+  kb_dir: kb
+  db: db/inspections.sqlite
+
+camera:
+  width: 4056          # Pi HQ Camera full resolution
+  height: 3040
+  calibration: kb/camera_calib.npz
+
+preprocess:
+  clahe_clip: 2.0
+  clahe_grid: [8, 8]
+
+align:
+  method: orb          # orb | fiducial
+  orb_features: 5000
+  ransac_thresh: 3.0
+
+anomaly:
+  backend: cpu         # cpu | hailo
+  model: models/patchcore.onnx
+  input_size: [256, 256]
+  threshold: 0.5       # tuned later on validation data
+  min_blob_area_px: 30
+
+classifier:
+  model: models/classifier.onnx
+  input_size: [128, 128]
+  classes: [solder_bridge, missing_component, tombstone, misalignment,
+            wrong_polarity, insufficient_solder, excess_solder,
+            solder_ball, scratch]
+
+llm:
+  pte: models/llama3_2_1b_q8da4w_512.pte
+  tokenizer: models/tokenizer.model
+  hf_repo: iffatirfana/pcb-inspect-ps5-models
+  max_new_tokens: 150
+  temperature: 0.0
+  context_length: 512
