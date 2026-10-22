@@ -16,6 +16,7 @@ import yaml
 import cv2
 
 from align.register import Aligner
+from capture.camera import Camera
 from llm.advisor import Advisor, MockBackend
 from mapping.board_map import BoardMap, scale_transform
 from rules.engine import RuleEngine
@@ -23,14 +24,15 @@ from rules.engine import RuleEngine
 CFG = yaml.safe_load(open("config.yaml", encoding="utf-8"))
 RULES = RuleEngine(str(Path(CFG["paths"]["kb_dir"]) / "acceptance.yaml"))
 SAMPLE = Path("kb/board_sample")
+CAMERA = Camera(fallback_image=str(SAMPLE / "test_board.png"))
 ALIGNER = Aligner(cv2.imread(str(SAMPLE / "golden.png")))  # real: CFG golden_image
 BOARD = BoardMap("kb/board_sample", scale_transform(0.05))  # real board: kb/board_demo + calibrated transform
 ADVISOR = Advisor(MockBackend(), kb_dir=CFG["paths"]["kb_dir"])  # Pi: swap in ExecuTorch backend
 
 
-# 0. Capture  [STUB - Person 1, real: Picamera2 on the Pi]
+# 0. Capture  [REAL - Picamera2 on the Pi, image file elsewhere]
 def capture():
-    return cv2.imread(str(SAMPLE / "test_board.png"))
+    return CAMERA.capture()
 
 
 # 1. Preprocess  [STUB - real: preprocess/transforms.normalize_lighting]
@@ -41,7 +43,6 @@ def preprocess(img):
 # 2. Align to golden board  [REAL - align/register.py]
 def align(img):
     aligned, H, stats = ALIGNER.align(img)
-    print("Alignment:", stats)
     return aligned, H
 
 
