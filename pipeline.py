@@ -13,10 +13,12 @@ from pathlib import Path
 import numpy as np
 import yaml
 
+from llm.advisor import Advisor, MockBackend
 from rules.engine import RuleEngine
 
 CFG = yaml.safe_load(open("config.yaml", encoding="utf-8"))
 RULES = RuleEngine(str(Path(CFG["paths"]["kb_dir"]) / "acceptance.yaml"))
+ADVISOR = Advisor(MockBackend(), kb_dir=CFG["paths"]["kb_dir"])  # Pi: swap in ExecuTorch backend
 
 
 # 0. Capture  [STUB - Person 1, real: Picamera2]
@@ -57,19 +59,11 @@ def apply_rules(defects):
     return [RULES.evaluate(d) for d in defects]
 
 
-# 6. Llama advice  [STUB - Person 1, real: ExecuTorch .pte]
+# 6. Llama advice  [REAL logic, MOCK model - swap backend on the Pi]
 def explain(defects):
     verdict = RULES.board_verdict(defects)
-    if not defects:
-        return {"summary": "No defects found", "actions": [], "verdict": verdict}
-    lines = [f"{d['type']} on {d['refdes']} ({d['severity']}, {d['verdict']})" for d in defects]
-    actions = []
-    for d in defects:
-        if d.get("rule_note"):
-            actions.append(f"{d['refdes']}: {d['rule_note']}")
-        if d.get("sop_id"):
-            actions.append(f"{d['refdes']}: follow {d['sop_id']}")
-    return {"summary": "; ".join(lines), "actions": actions, "verdict": verdict}
+    advice, source = ADVISOR.advise(defects, verdict)
+    return {**advice.model_dump(), "source": source}
 
 
 # 7. UI  [STUB - real: Flask page]
