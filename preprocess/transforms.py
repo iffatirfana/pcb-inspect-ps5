@@ -47,3 +47,42 @@ def crop(img_bgr, bbox, pad=8):
     x1, y1 = max(0, x1 - pad), max(0, y1 - pad)
     x2, y2 = min(w, x2 + pad), min(h, y2 + pad)
     return img_bgr[y1:y2, x1:x2]
+
+
+def tile_positions(length, size, overlap):
+    """Start offsets so tiles of `size` cover [0, length) with at least `overlap`."""
+    if length <= size:
+        return [0]
+    step = size - overlap
+    starts = list(range(0, length - size, step))
+    starts.append(length - size)          # last tile flush with the edge
+    return starts
+
+
+def tile_image(img, size=256, overlap=32):
+    """Cut a full-resolution image into overlapping tiles.
+
+    Returns a list of (x, y, tile). Tiles at the right/bottom edge are shifted
+    inwards so every tile is exactly size x size (image must be >= size).
+    Use the same size/overlap in training and inference (config.yaml anomaly.*).
+    """
+    h, w = img.shape[:2]
+    return [(x, y, img[y:y + size, x:x + size])
+            for y in tile_positions(h, size, overlap)
+            for x in tile_positions(w, size, overlap)]
+
+
+def stitch_maps(tile_maps, shape, size=256):
+    """Combine per-tile anomaly maps [(x, y, map)] into one full-image map.
+
+    Each map may be smaller than the tile (model output); it is resized to the
+    tile size. Overlapping regions are averaged.
+    """
+    h, w = shape[:2]
+    acc = np.zeros((h, w), np.float32)
+    cnt = np.zeros((h, w), np.float32)
+    for x, y, m in tile_maps:
+        m = cv2.resize(np.asarray(m, np.float32), (size, size), interpolation=cv2.INTER_LINEAR)
+        acc[y:y + size, x:x + size] += m
+        cnt[y:y + size, x:x + size] += 1
+    return acc / np.maximum(cnt, 1)

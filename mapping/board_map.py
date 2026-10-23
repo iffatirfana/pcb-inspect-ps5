@@ -94,7 +94,7 @@ class BoardMap:
 
 def self_test():
     # sample board: 0.05 mm per pixel (20 px/mm), image origin = board origin
-    bm = BoardMap("kb/board_sample", scale_transform(0.05))
+    bm = BoardMap("kb/boards/sample_synthetic", scale_transform(0.05))
     tests = {
         "bridge U3 pins 4-5": [348, 292, 356, 308],   # 17.4-17.8 x 14.6-15.4 mm
         "tombstone on R7":    [680, 190, 720, 210],   # 34-36 x 9.5-10.5 mm

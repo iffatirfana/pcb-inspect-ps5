@@ -46,7 +46,7 @@ def test_board_verdict_is_worst(engine):
 # ---------- board mapping ----------
 @pytest.fixture(scope="module")
 def board():
-    return BoardMap("kb/board_sample", scale_transform(0.05))
+    return BoardMap("kb/boards/sample_synthetic", scale_transform(0.05))
 
 
 def test_bridge_maps_to_pins_and_nets(board):
@@ -107,3 +107,44 @@ def test_kicad_rotation(tmp_path):
     convert("tests/fixtures_board.kicad_pcb", tmp_path)
     pads = (tmp_path / "pads.csv").read_text().splitlines()
     assert "C1,1,110.0,60.825,+3V3" in pads and "R1,2,100.825,50.0,VOUT" in pads
+
+
+# ---------- board profiles ----------
+def test_profiles_listed_and_readiness():
+    from mapping.profiles import list_profiles
+    profiles = list_profiles("kb/boards")
+    assert profiles["sample_synthetic"].ready
+    test_board = profiles["ps5_testboard_v1"]
+    assert not test_board.ready
+    assert any("golden" in p for p in test_board.problems())
+
+
+def test_profile_maps_bridge():
+    from mapping.profiles import list_profiles
+    bm = list_profiles("kb/boards")["sample_synthetic"].board_map
+    d = bm.locate([348, 292, 356, 308])
+    assert d["refdes"] == "U3" and sorted(d["nets"]) == ["3V3", "GND"]
+
+
+# ---------- tiling ----------
+def test_tiles_cover_image_and_stitch_back():
+    from preprocess.transforms import stitch_maps, tile_image
+    img = np.zeros((3040, 4056, 3), np.uint8)
+    tiles = tile_image(img, 256, 32)
+    covered = np.zeros(img.shape[:2], bool)
+    for x, y, t in tiles:
+        assert t.shape[:2] == (256, 256)
+        covered[y:y + 256, x:x + 256] = True
+    assert covered.all()
+    maps = [(x, y, np.ones((64, 64), np.float32)) for x, y, _ in tiles]
+    heat = stitch_maps(maps, img.shape[:2], 256)
+    assert heat.shape == img.shape[:2] and np.allclose(heat, 1.0)
+
+
+# ---------- advisor summary ----------
+def test_weak_summary_replaced(defects):
+    class Weak(MockBackend):
+        def generate(self, prompt):
+            return '{"summary": "Rework", "risk": "r", "actions": ["a"], "verdict": "REWORK"}'
+    adv, src = Advisor(Weak()).advise(defects, "REWORK")
+    assert src == "llm+summary" and "U3" in adv.summary and "3V3" in adv.summary

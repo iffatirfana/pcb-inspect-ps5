@@ -81,7 +81,9 @@ class Advisor:
         facts = "\n".join(lines)[:MAX_PROMPT_CHARS]
 
         system = ("You are a PCB quality-control assistant. Use ONLY the facts given. "
-                  "Do not change the verdict. Reply with JSON only: "
+                  "Do not change the verdict. In summary, name each defect type with its "
+                  "component, pins and nets, e.g. \"Solder bridge on U3 pins 4-5 shorting "
+                  "3V3 to GND\". Reply with JSON only: "
                   '{"summary": str, "risk": str, "actions": [str], "verdict": str}')
         return ("<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n"
                 f"{system}<|eot_id|><|start_header_id|>user<|end_header_id|>\n\n"
@@ -114,13 +116,36 @@ class Advisor:
             return None, "no actions for a failing board"
         return adv, None
 
+    # ---------- summary ----------
+    @staticmethod
+    def template_summary(defects):
+        parts = []
+        for d in defects:
+            s = f"{d['type'].replace('_', ' ').capitalize()} on {d['refdes']}"
+            pins = d.get("pins") or []
+            if pins:
+                s += " pin" + ("s " if len(pins) > 1 else " ") + "-".join(str(p) for p in pins)
+            nets = d.get("nets") or []
+            if len(nets) > 1:
+                s += f" shorting {nets[0]} to {nets[1]}" if d["type"] == "solder_bridge" \
+                    else f" (nets {'/'.join(nets)})"
+            elif nets:
+                s += f" (net {nets[0]})"
+            parts.append(f"{s} [{d['severity']}]")
+        return "; ".join(parts) + "."
+
+    @staticmethod
+    def summary_ok(summary, defects):
+        """Summary must name every defective component (weak 'Rework' summaries fail)."""
+        found = set(re.findall(r"\b[A-Z]{1,3}\d{1,4}\b", summary))
+        return {d["refdes"] for d in defects if d.get("refdes")} <= found
+
     # ---------- fallback ----------
     def template(self, defects, board_verdict):
         if not defects:
             return Advice(summary="No defects found.", risk="None.", actions=[],
                           verdict=board_verdict)
-        summary = "; ".join(f"{d['type'].replace('_', ' ')} on {d['refdes']} "
-                            f"({d['severity']})" for d in defects)
+        summary = self.template_summary(defects)
         risks = [self.defs.get(d["type"], {}).get("risk", "") for d in defects]
         actions = []
         for d in defects:
@@ -134,7 +159,8 @@ class Advisor:
 
     # ---------- main entry ----------
     def advise(self, defects, board_verdict):
-        """Returns (Advice, source) where source is 'llm', 'llm_retry' or 'template'."""
+        """Returns (Advice, source): 'llm', 'llm_retry', '<that>+summary' when the
+        model's actions were kept but its summary was replaced, or 'template'."""
         if not defects:
             return self.template(defects, board_verdict), "template"
         prompt = self.build_prompt(defects, board_verdict)
@@ -142,6 +168,9 @@ class Advisor:
             raw = self.backend.generate(prompt)
             adv, _reason = self.validate(raw, defects, board_verdict)
             if adv:
+                if not self.summary_ok(adv.summary, defects):
+                    adv.summary = self.template_summary(defects)
+                    attempt += "+summary"
                 return adv, attempt
         return self.template(defects, board_verdict), "template"
 

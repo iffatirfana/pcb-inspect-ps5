@@ -4,7 +4,7 @@
   pads.csv  Ref,Pin,X,Y,Net                          (absolute pad centres, mm)
 
 Usage:
-  python -m tools.kicad_to_csv path/to/board.kicad_pcb kb/board_demo
+  python -m tools.kicad_to_csv path/to/board.kicad_pcb kb/boards/<board_id>
 """
 import csv
 import math
@@ -113,6 +113,6 @@ def convert(pcb_path, out_dir):
 
 if __name__ == "__main__":
     if len(sys.argv) != 3:
-        sys.exit("usage: python -m tools.kicad_to_csv board.kicad_pcb kb/board_demo")
+        sys.exit("usage: python -m tools.kicad_to_csv board.kicad_pcb kb/boards/<board_id>")
     n_parts, n_pads = convert(sys.argv[1], sys.argv[2])
     print(f"wrote {n_parts} components and {n_pads} pads to {sys.argv[2]}")

@@ -1,0 +1,8 @@
+# Synthetic demo board (generated image) - used by tests and laptop demos.
+name: Synthetic sample board
+golden: golden.png
+sample_image: test_board.png     # used as the camera image off the Pi
+calibration:
+  mm_per_px: 0.05                # 20 px per mm
+  origin_px: [0, 0]              # pixel that corresponds to board (0, 0) mm in pos/pads
+anomaly_bank: null               # Person 2: per-board PatchCore memory bank

@@ -27,10 +27,26 @@ Vision runs on the Raspberry Pi CPU (ONNX Runtime) or on a Hailo NPU (HailoRT). 
 | `llm/advisor.py` | Prompt building, JSON validation, retry, SOP fallback |
 | `llm/executorch_backend.py` | Runs the exported `.pte` with the ExecuTorch Llama runner |
 | `ui/app.py` | Offline operator web page |
-| `kb/` | Defect definitions, acceptance rules, repair procedures, board files |
+| `mapping/profiles.py` | Board profiles: one folder per board type in `kb/boards/` |
+| `kb/` | Defect definitions, acceptance rules, repair procedures (shared by all boards) |
+| `kb/boards/<board>/` | Per-board data: `profile.yaml`, `golden.png`, `pos.csv`, `pads.csv` |
 | `tools/kicad_to_csv.py` | Generates `pos.csv` and `pads.csv` from a `.kicad_pcb` |
 | `experiments/benchmark.py` | Per-stage latency, memory and temperature to CSV |
 | `tests/` | Unit tests (run automatically on every push) |
+
+## Board profiles
+
+The pipeline, models and rules are shared. Each board type only adds a folder:
+
+```
+kb/boards/<board_id>/
+  profile.yaml   name, golden image, camera calibration (mm_per_px, origin_px)
+  golden.png     photo of a known-good board in the fixture
+  pos.csv        component positions   (python -m tools.kicad_to_csv board.kicad_pcb kb/boards/<board_id>)
+  pads.csv       pad positions and nets
+```
+
+The operator picks the board in the UI dropdown (or `python pipeline.py <board_id>`); `board:` in `config.yaml` is the default. Boards with missing files are listed as not ready, with the reason.
 
 ## Run on a laptop (sample board)
 

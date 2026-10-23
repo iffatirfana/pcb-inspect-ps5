@@ -7,7 +7,7 @@ import json
 import sqlite3
 from pathlib import Path
 
-from flask import Flask, redirect, render_template_string, send_file, url_for
+from flask import Flask, redirect, render_template_string, request, send_file, url_for
 
 import pipeline
 
@@ -21,6 +21,8 @@ PAGE = """<!doctype html><html><head><meta charset="utf-8">
  body{font-family:Arial,sans-serif;margin:0;background:#111;color:#eee}
  header{display:flex;justify-content:space-between;align-items:center;padding:12px 20px;background:#1c1c1c}
  h1{font-size:18px;margin:0}
+ select{font-size:15px;padding:9px;border-radius:6px;background:#2a2a2a;color:#eee;border:1px solid #444;margin-right:8px}
+ .err{background:#5a1d1d}
  button{font-size:16px;padding:10px 22px;border:0;border-radius:6px;background:#2d7ff9;color:#fff;cursor:pointer}
  main{display:grid;grid-template-columns:minmax(0,3fr) minmax(0,2fr);gap:16px;padding:16px}
  @media(max-width:900px){main{grid-template-columns:1fr}}
@@ -34,12 +36,20 @@ PAGE = """<!doctype html><html><head><meta charset="utf-8">
  li{margin-bottom:6px}.muted{color:#999;font-size:13px}
 </style></head><body>
 <header><h1>PCB Inspection Station &middot; offline</h1>
-<form method="post" action="{{ url_for('inspect') }}"><button>Inspect board</button></form></header>
+<form method="post" action="{{ url_for('inspect') }}">
+ <select name="board" aria-label="Board">{% for p in boards %}
+  <option value="{{ p.id }}" {% if p.id == selected %}selected{% endif %} {% if not p.ready %}disabled{% endif %}>
+   {{ p.name }}{% if not p.ready %} (not ready){% endif %}</option>{% endfor %}
+ </select><button>Inspect board</button></form></header>
+{% if error %}<div style="padding:16px 16px 0"><div class="card err">{{ error }}</div></div>{% endif %}
+{% set notready = boards|rejectattr('ready')|list %}{% if notready %}
+<div style="padding:16px 16px 0"><div class="card muted">{% for p in notready %}
+ <div><b>{{ p.name }}</b> not ready: {{ p.problems()|join('; ') }}</div>{% endfor %}</div></div>{% endif %}
 {% if r %}
 <main>
  <div class="card"><img src="{{ url_for('image') }}?t={{ r.timings.total }}" alt="Inspected board"></div>
  <div>
-  <div class="card"><span class="badge {{ r.advice.verdict }}">{{ r.advice.verdict }}</span>
+  <div class="card"><p class="muted">Board: {{ r.board_name }}</p><span class="badge {{ r.advice.verdict }}">{{ r.advice.verdict }}</span>
    <p>{{ r.advice.summary }}</p><p class="muted">Risk: {{ r.advice.risk }}</p></div>
   <div class="card"><h3>Defects</h3><table>
    <tr><th>Ref</th><th>Defect</th><th>Pins / nets</th><th>Severity</th><th>Rule</th></tr>
@@ -52,8 +62,8 @@ PAGE = """<!doctype html><html><head><meta charset="utf-8">
 </main>
 {% else %}<main><div class="card">Place a board in the fixture and press <b>Inspect board</b>.</div></main>{% endif %}
 <div style="padding:0 16px 16px"><div class="card"><h3>Recent inspections</h3><table>
- <tr><th>Time</th><th>Verdict</th><th>Defects</th><th>Total ms</th></tr>
- {% for h in history %}<tr><td>{{ h.ts }}</td><td>{{ h.verdict }}</td><td>{{ h.n }}</td><td>{{ h.ms }}</td></tr>{% endfor %}
+ <tr><th>Time</th><th>Board</th><th>Verdict</th><th>Defects</th><th>Total ms</th></tr>
+ {% for h in history %}<tr><td>{{ h.ts }}</td><td>{{ h.board }}</td><td>{{ h.verdict }}</td><td>{{ h.n }}</td><td>{{ h.ms }}</td></tr>{% endfor %}
 </table></div></div></body></html>"""
 
 
@@ -62,21 +72,31 @@ def history(limit=10):
     if not db.exists():
         return []
     con = sqlite3.connect(db)
-    rows = con.execute("SELECT ts, verdict, defects, timings FROM inspections "
+    cols = [r[1] for r in con.execute("PRAGMA table_info(inspections)")]
+    board = "board" if "board" in cols else "''"
+    rows = con.execute(f"SELECT ts, {board}, verdict, defects, timings FROM inspections "
                        "ORDER BY rowid DESC LIMIT ?", (limit,)).fetchall()
     con.close()
-    return [{"ts": ts, "verdict": v, "n": len(json.loads(d)),
-             "ms": json.loads(t).get("total", "-")} for ts, v, d, t in rows]
+    return [{"ts": ts, "board": b or "-", "verdict": v, "n": len(json.loads(d)),
+             "ms": json.loads(t).get("total", "-")} for ts, b, v, d, t in rows]
 
 
 @app.get("/")
 def index():
-    return render_template_string(PAGE, r=LAST.get("r"), history=history())
+    selected = LAST.get("board") or pipeline.CFG["board"]
+    return render_template_string(PAGE, r=LAST.get("r"), history=history(),
+                                  boards=list(pipeline.PROFILES.values()),
+                                  selected=selected, error=LAST.pop("error", None))
 
 
 @app.post("/inspect")
 def inspect():
-    LAST["r"] = pipeline.run_once(verbose=False)
+    board = request.form.get("board") or pipeline.CFG["board"]
+    LAST["board"] = board
+    try:
+        LAST["r"] = pipeline.run_once(board, verbose=False)
+    except (pipeline.ProfileError, RuntimeError) as e:
+        LAST["error"] = str(e)
     return redirect(url_for("index"))
 
 

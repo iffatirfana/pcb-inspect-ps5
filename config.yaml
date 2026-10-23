@@ -1,11 +1,11 @@
 # PS5 - PCB inspection pipeline configuration
 # Shared contract between all modules. Change only after telling the team.
 
+board: sample_synthetic    # default board profile (folder in kb/boards/); the UI can switch it
+
 paths:
-  golden_image: kb/board_demo/golden.png
-  pick_and_place: kb/board_demo/pos.csv
-  netlist: kb/board_demo/netlist.net
-  kb_dir: kb
+  boards_dir: kb/boards     # one folder per board design: profile.yaml, pos.csv, pads.csv, golden.png
+  kb_dir: kb                # shared: defects.yaml, acceptance.yaml, sop.yaml
   db: db/inspections.sqlite
 
 camera:
@@ -26,6 +26,8 @@ anomaly:
   backend: cpu         # cpu | hailo
   model: models/patchcore.onnx
   input_size: [256, 256]
+  tile_size: 256       # full-resolution image is cut into tiles of this size (px)
+  tile_overlap: 32     # overlap between neighbouring tiles (px); heatmaps are averaged there
   threshold: 0.5       # tuned later on validation data
   min_blob_area_px: 30
 

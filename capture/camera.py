@@ -55,7 +55,7 @@ class Camera:
 
 
 if __name__ == "__main__":
-    cam = Camera(fallback_image="kb/board_sample/test_board.png")
+    cam = Camera(fallback_image="kb/boards/sample_synthetic/test_board.png")
     img = cam.capture()
     print("source:", cam.source, "| shape:", img.shape)
     Path("results").mkdir(exist_ok=True)
