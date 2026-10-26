@@ -22,23 +22,42 @@ align:
   orb_features: 5000
   ransac_thresh: 3.0
 
+quality:               # image-quality gate -> INVALID_CAPTURE when not met
+  min_sharpness: 40      # variance of Laplacian at 1024 px width
+  min_brightness: 35
+  max_brightness: 225
+  max_clipped: 0.10      # fraction of over/under-exposed pixels
+  min_inliers: 40        # alignment matches
+  max_reproj_px: 3.0     # alignment error
+
+# Assembled boards: golden-diff anomaly (threshold per board in profile.yaml)
 anomaly:
   backend: cpu         # cpu | hailo
-  model: models/patchcore.onnx
-  input_size: [256, 256]
-  tile_size: 256       # full-resolution image is cut into tiles of this size (px)
+  backbone_onnx: models/golden_diff_resnet18.onnx   # Pi; PyTorch is used if missing
+  tile_size: 256       # image is cut into tiles of this size (px)
   tile_overlap: 32     # overlap between neighbouring tiles (px); heatmaps are averaged there
-  threshold: 0.5       # tuned later on validation data
+  work_width: 2048     # camera image is processed at this width (px); results scaled back
   min_blob_area_px: 30
 
-classifier:
-  model: models/classifier.onnx
+classifier:            # assembled boards: names each golden-diff box
+  model: models/classifier.onnx   # missing -> every box is "unknown_anomaly" (REVIEW)
   input_size: [128, 128]
+  min_conf: 0.6        # below -> "unknown_anomaly"
   classes: [solder_bridge, missing_component, tombstone, misalignment,
             wrong_polarity, insufficient_solder, excess_solder,
-            solder_ball, scratch]
+            solder_ball, scratch]   # + "normal" as the last output = false alarm
+
+# Bare boards: YOLO detector (Person 2: train on bare-PCB data, export ONNX)
+yolo:
+  model: models/yolo_bare.onnx
+  imgsz: 640           # tile size = model input size
+  tile_overlap: 64
+  conf: 0.25
+  iou: 0.5
+  classes: [open_circuit, short_circuit, mouse_bite, spur, spurious_copper, pin_hole]
 
 llm:
+  backend: auto        # auto (ExecuTorch if built + model present, else mock) | executorch | mock
   pte: models/llama3_2_1b_q8da4w_512.pte
   tokenizer: models/tokenizer.model
   hf_repo: iffatirfana/pcb-inspect-ps5-models

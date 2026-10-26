@@ -10,8 +10,13 @@
 #   connector      - headers, sockets, terminals
 #   any            - matches every package
 #
-# severity: CRITICAL > MAJOR > MINOR
-# verdict:  REJECT (scrap/escalate) | REWORK (repair) | PASS (accept, log only)
+# severity: CRITICAL > MAJOR > MINOR       (from the defect + board facts)
+# verdict:  REJECT (scrap/escalate) > REWORK (repair) > REVIEW (human decides) > PASS
+# Detector confidence is NOT severity: a finding below review_below_conf keeps its
+# severity but its verdict becomes REVIEW (unless the rule already says REJECT).
+# INVALID_CAPTURE is decided before the rules (quality gate), never here.
+
+review_below_conf: 0.5
 
 rules:
   - id: R01
@@ -139,8 +144,78 @@ rules:
     verdict: PASS
     sop_id: null
 
+  # ---- unclassified differences (assembled boards, golden-diff) ----
+  - id: R16
+    defect: unknown_anomaly
+    package_class: any
+    condition: null
+    severity: MAJOR
+    verdict: REVIEW
+    sop_id: SOP-REVIEW-01
+    note: Not classified - a person must inspect this area.
+
+  # ---- bare PCB defects (YOLO) ----
+  - id: R20
+    defect: short_circuit
+    package_class: any
+    condition: null
+    severity: CRITICAL
+    verdict: REJECT
+    sop_id: null
+    note: Copper short on a bare board - do not assemble; return to fab.
+
+  - id: R21
+    defect: open_circuit
+    package_class: any
+    condition: null
+    severity: CRITICAL
+    verdict: REJECT
+    sop_id: null
+    note: Broken trace on a bare board - do not assemble; return to fab.
+
+  - id: R22
+    defect: spurious_copper
+    package_class: any
+    condition: near_conductor
+    severity: MAJOR
+    verdict: REWORK
+    sop_id: SOP-BARE-TRIM-01
+
+  - id: R23
+    defect: spurious_copper
+    package_class: any
+    condition: null
+    severity: MINOR
+    verdict: PASS
+    sop_id: null
+
+  - id: R24
+    defect: spur
+    package_class: any
+    condition: null
+    severity: MINOR
+    verdict: REWORK
+    sop_id: SOP-BARE-TRIM-01
+
+  - id: R25
+    defect: mouse_bite
+    package_class: any
+    condition: null
+    severity: MAJOR
+    verdict: REVIEW
+    sop_id: SOP-REVIEW-01
+    note: Check remaining trace width against the design rule.
+
+  - id: R26
+    defect: pin_hole
+    package_class: any
+    condition: null
+    severity: MINOR
+    verdict: PASS
+    sop_id: null
+
 default:
   severity: MAJOR
-  verdict: REWORK
-  sop_id: null
+  verdict: REVIEW
+  sop_id: SOP-REVIEW-01
   note: No rule matched - send to manual inspection.

@@ -1,9 +1,13 @@
 # PS5 inspection test board v1 (hardware/testboard). pos.csv / pads.csv are generated:
 #   python -m tools.kicad_to_csv hardware/testboard/ps5_testboard.kicad_pcb kb/boards/ps5_testboard_v1
 name: PS5 inspection test board v1
+board_type: assembled            # assembled -> golden-diff + classifier | bare -> YOLO
 golden: golden.png               # TODO: best photo of a good board from the rig
+references: refs/*               # TODO: 4 more good-board photos in refs/
 sample_image: null
 calibration:
   mm_per_px: null                # TODO: from camera calibration on the rig
   origin_px: [0, 0]              # TODO: pixel of KiCad (0, 0) mm in the golden image
-anomaly_bank: null               # TODO: Person 2 (fitted on ~30 good-board photos)
+  rotation_deg: 0
+  flip_y: false                  # KiCad y grows downwards like the image: keep false
+anomaly_threshold: null          # set by: python -m tools.setup_board ps5_testboard_v1

@@ -72,4 +72,25 @@ SOP-CLEAN-01:
     - Check nearby pads and traces for any remaining balls.
   verify:
     - No loose solder visible under magnification.
-    - Re-inspect the board on the station
+    - Re-inspect the board on the station before release.
+
+SOP-REVIEW-01:
+  title: Manual review of a flagged area
+  tools: [magnifier or microscope, ESD tweezers]
+  steps:
+    - Examine the boxed area under magnification.
+    - Decide whether it is a real defect and which type.
+    - Mark the finding correct or wrong on the inspection page.
+    - If it is a real defect, follow the procedure for that defect type.
+  verify:
+    - Finding marked on the inspection page.
+
+SOP-BARE-TRIM-01:
+  title: Remove copper spur or island
+  tools: [scalpel or fibreglass pen, magnifier, IPA]
+  steps:
+    - Under magnification, scrape away the unwanted copper without touching the trace.
+    - Clean the area with IPA.
+  verify:
+    - Measure that the two nearby conductors are not connected.
+    - Re-inspect the board on the station before release.

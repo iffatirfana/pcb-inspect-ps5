@@ -1,11 +1,17 @@
-"""PS5 inspection pipeline - one shared pipeline, per-board profiles.
+"""PS5 inspection pipeline - one shared pipeline, inspector chosen per board.
 
-Stages marked STUB return data in the agreed format; replace one at a time
-with the real module and the rest keeps working.
-Run:  python pipeline.py [board_id]        (board_id = folder in kb/boards/)
+    capture -> quality gate -> preprocess -> align (+ alignment check)
+      -> inspector by board_type  (assembled: golden-diff + classifier | bare: YOLO)
+      -> map to board -> rules -> VERDICT (shown + logged immediately)
+      -> Llama advice (afterwards; never changes the verdict)
+
+Verdicts: PASS | REVIEW | REWORK | REJECT, or INVALID_CAPTURE from the quality gate.
+Run:  python pipeline.py [board_id]
 """
+import hashlib
 import json
 import sqlite3
+import subprocess
 import sys
 import time
 from datetime import datetime
@@ -14,16 +20,38 @@ from pathlib import Path
 import cv2
 import yaml
 
+from align.register import AlignError
 from capture.camera import Camera
 from llm.advisor import Advisor, MockBackend
 from mapping.profiles import ProfileError, list_profiles
 from rules.engine import RuleEngine
+from vision.golden_diff import GoldenDiff
+from vision.inspectors import InspectorError, get_inspector
+from vision.quality import check_alignment, check_capture
 
 CFG = yaml.safe_load(open("config.yaml", encoding="utf-8"))
 RULES = RuleEngine(str(Path(CFG["paths"]["kb_dir"]) / "acceptance.yaml"))
 PROFILES = list_profiles(CFG["paths"]["boards_dir"])
 CAMERA = Camera()                                     # Picamera2 on the Pi; None elsewhere
-ADVISOR = Advisor(MockBackend(), kb_dir=CFG["paths"]["kb_dir"])  # Pi: swap in ExecuTorch backend
+INVALID = "INVALID_CAPTURE"
+
+
+def _make_backend():
+    mode, llm = CFG["llm"].get("backend", "auto"), CFG["llm"]
+    if mode in ("auto", "executorch"):
+        try:
+            from llm.executorch_backend import ExecuTorchBackend
+            return ExecuTorchBackend(pte=llm["pte"], tokenizer=llm["tokenizer"],
+                                     max_new_tokens=llm.get("max_new_tokens", 150),
+                                     temperature=llm.get("temperature", 0.0)), "executorch"
+        except FileNotFoundError:
+            if mode == "executorch":
+                raise
+    return MockBackend(), "mock"
+
+
+BACKEND, BACKEND_NAME = _make_backend()
+ADVISOR = Advisor(BACKEND, kb_dir=CFG["paths"]["kb_dir"])
 
 
 def get_profile(board_id=None):
@@ -36,8 +64,9 @@ def get_profile(board_id=None):
     return profile
 
 
-# 0. Capture  [REAL - Picamera2 on the Pi; profile's sample image elsewhere]
+# ---------------------------------------------------------------- stages
 def capture(profile):
+    """Pi: HQ camera. Elsewhere: the profile's sample image."""
     if CAMERA.cam is not None:
         return CAMERA.capture()
     if profile.sample_image:
@@ -45,48 +74,25 @@ def capture(profile):
     raise RuntimeError(f"no camera and no sample_image for board '{profile.id}'")
 
 
-# 1. Preprocess  [STUB - real: preprocess/transforms.normalize_lighting]
 def preprocess(img):
+    """STUB - real: preprocess.transforms.normalize_lighting (apply the same to golden/refs)."""
     return img
 
 
-# 2. Align to the board's golden image  [REAL - align/register.py]
 def align(img, profile):
     aligned, H, stats = profile.aligner.align(img)
-    return aligned, H
+    valid = GoldenDiff.valid_mask(H, img.shape, aligned.shape)
+    return aligned, valid, stats
 
 
-# 3. Vision: anomaly + classifier  [STUB - Person 2, real: ONNX / Hailo]
-# Contract: list of {type, conf, bbox[x1,y1,x2,y2], area_px} in aligned-image pixels.
-# The real version tiles the image (config anomaly.tile_size / tile_overlap,
-# preprocess.transforms.tile_image / stitch_maps) and uses profile.anomaly_bank.
-def detect(img, profile):
-    if profile.id != "sample_synthetic":
-        return []                                     # stub only knows the synthetic board
-    return [
-        {"type": "solder_bridge", "conf": 0.94, "bbox": [348, 292, 356, 308], "area_px": 128},
-        {"type": "tombstone", "conf": 0.88, "bbox": [680, 190, 720, 210], "area_px": 800},
-    ]
+def map_to_board(findings, profile):
+    return profile.board_map.annotate(findings)
 
 
-# 4. Board mapping  [REAL - mapping/board_map.py with the profile's pos/pads]
-def map_to_board(defects, profile):
-    return profile.board_map.annotate(defects)
+def apply_rules(findings):
+    return [RULES.evaluate(d) for d in findings]
 
 
-# 5. Rule engine  [REAL - rules/engine.py + kb/acceptance.yaml]
-def apply_rules(defects):
-    return [RULES.evaluate(d) for d in defects]
-
-
-# 6. Llama advice  [REAL logic, MOCK model - swap backend on the Pi]
-def explain(defects):
-    verdict = RULES.board_verdict(defects)
-    advice, source = ADVISOR.advise(defects, verdict)
-    return {**advice.model_dump(), "source": source}
-
-
-# 7. Output for UI  [REAL - draws boxes; ui/app.py shows it]
 COLORS = {"CRITICAL": (0, 0, 255), "MAJOR": (0, 140, 255), "MINOR": (0, 200, 0)}
 
 
@@ -94,37 +100,88 @@ def draw(img, defects, path="results/last_inspection.png"):
     out = img.copy()
     for d in defects:
         x1, y1, x2, y2 = d["bbox"]
-        c = COLORS.get(d.get("severity"), (255, 255, 0))
+        c = (200, 80, 200) if d.get("verdict") == "REVIEW" else COLORS.get(d.get("severity"), (255, 255, 0))
         cv2.rectangle(out, (x1 - 6, y1 - 6), (x2 + 6, y2 + 6), c, 2)
-        cv2.putText(out, f"{d['refdes']} {d['type']}", (x1 - 6, max(12, y1 - 10)),
+        cv2.putText(out, f"{d.get('refdes', '')} {d['type']}", (x1 - 6, max(12, y1 - 10)),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.45, c, 1, cv2.LINE_AA)
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     cv2.imwrite(path, out)
     return path
 
 
-def show(defects, advice):
-    print(json.dumps({"defects": defects, "advice": advice}, indent=2))
-
-
-# 8. Log to SQLite  [REAL]
-def log(board_id, defects, advice, timings):
+# ---------------------------------------------------------------- logging
+def _db():
     Path(CFG["paths"]["db"]).parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(CFG["paths"]["db"])
     con.execute("""CREATE TABLE IF NOT EXISTS inspections(
-        ts TEXT, verdict TEXT, defects TEXT, advice TEXT, timings TEXT, board TEXT)""")
-    cols = [r[1] for r in con.execute("PRAGMA table_info(inspections)")]
-    if "board" not in cols:                           # database from an older version
-        con.execute("ALTER TABLE inspections ADD COLUMN board TEXT")
-    con.execute("INSERT INTO inspections (ts, verdict, defects, advice, timings, board) "
-                "VALUES (?,?,?,?,?,?)",
-                (datetime.now().isoformat(timespec="seconds"), advice["verdict"],
-                 json.dumps(defects), json.dumps(advice), json.dumps(timings), board_id))
+        ts TEXT, verdict TEXT, defects TEXT, advice TEXT, timings TEXT)""")
+    cols = {r[1] for r in con.execute("PRAGMA table_info(inspections)")}
+    for col in ("board", "meta"):                     # databases from older versions
+        if col not in cols:
+            con.execute(f"ALTER TABLE inspections ADD COLUMN {col} TEXT")
+    con.execute("""CREATE TABLE IF NOT EXISTS verifications(
+        inspection_id INTEGER, defect_index INTEGER, label TEXT, note TEXT, ts TEXT)""")
+    return con
+
+
+def _file_id(path):
+    p = Path(path)
+    if not p.exists():
+        return None
+    if p.stat().st_size < 5_000_000:
+        return hashlib.sha1(p.read_bytes()).hexdigest()[:10]
+    return f"{p.stat().st_size}B@{int(p.stat().st_mtime)}"     # big model files
+
+
+def versions(profile):
+    try:
+        commit = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True,
+                                text=True, timeout=2).stdout.strip() or None
+    except Exception:
+        commit = None
+    files = {"config": "config.yaml", "profile": profile.dir / "profile.yaml",
+             "rules": Path(CFG["paths"]["kb_dir"]) / "acceptance.yaml",
+             "backbone": CFG["anomaly"].get("backbone_onnx"), "classifier": CFG["classifier"].get("model"),
+             "yolo": CFG["yolo"].get("model"), "llm": CFG["llm"]["pte"]}
+    return {"git": commit, "inspector": profile.inspector, "board_type": profile.board_type,
+            "llm_backend": BACKEND_NAME, **{k: _file_id(v) for k, v in files.items() if v}}
+
+
+def log(rec):
+    con = _db()
+    cur = con.execute("INSERT INTO inspections (ts, verdict, defects, advice, timings, board, meta) "
+                      "VALUES (?,?,?,?,?,?,?)",
+                      (rec["ts"], rec["verdict"], json.dumps(rec["defects"]),
+                       json.dumps(rec.get("advice")), json.dumps(rec["timings"]), rec["board"],
+                       json.dumps({"versions": rec["versions"], "quality": rec["quality"],
+                                   "invalid_reasons": rec["invalid_reasons"]})))
+    con.commit()
+    rid = cur.lastrowid
+    con.close()
+    return rid
+
+
+def update_advice(rec):
+    con = _db()
+    con.execute("UPDATE inspections SET advice=?, timings=? WHERE rowid=?",
+                (json.dumps(rec["advice"]), json.dumps(rec["timings"]), rec["id"]))
     con.commit()
     con.close()
 
 
-def run_once(board_id=None, verbose=True):
+def verify(inspection_id, defect_index, label, note=""):
+    """Operator feedback: label = correct | wrong | missed."""
+    con = _db()
+    con.execute("INSERT INTO verifications VALUES (?,?,?,?,?)",
+                (inspection_id, defect_index, label, note,
+                 datetime.now().isoformat(timespec="seconds")))
+    con.commit()
+    con.close()
+
+
+# ---------------------------------------------------------------- main entry points
+def inspect(board_id=None, image=None):
+    """Everything up to the verdict (fast). Returns the inspection record, already logged."""
     profile = get_profile(board_id)
     t, timings = time.perf_counter(), {}
 
@@ -134,22 +191,64 @@ def run_once(board_id=None, verbose=True):
         timings[name] = round((now - t) * 1000, 2)
         t = now
 
-    img = capture(profile);                    lap("capture")
-    img = preprocess(img);                     lap("preprocess")
-    img, H = align(img, profile);              lap("align")
-    defects = detect(img, profile);            lap("vision")
-    defects = map_to_board(defects, profile);  lap("mapping")
-    defects = apply_rules(defects);            lap("rules")
-    advice = explain(defects);                 lap("llm")
-    image_path = draw(img, defects);           lap("draw")
-    timings["total"] = round(sum(timings.values()), 2)
-    log(profile.id, defects, advice, timings)
+    rec = {"board": profile.id, "board_name": profile.name, "board_type": profile.board_type,
+           "inspector": profile.inspector, "ts": datetime.now().isoformat(timespec="seconds"),
+           "defects": [], "invalid_reasons": [], "quality": {}, "advice": None, "image": None}
+    img = image if image is not None else capture(profile);  lap("capture")
+    ok, reasons, rec["quality"] = check_capture(img, CFG.get("quality"));  lap("quality")
+    if ok:
+        img = preprocess(img);                                  lap("preprocess")
+        try:
+            img, valid, stats = align(img, profile)
+            rec["quality"]["align"] = stats
+            ok, reasons = check_alignment(stats, CFG.get("quality"))
+        except AlignError as e:
+            ok, reasons = False, [f"board not recognised: {e}"]
+        lap("align")
+    if ok:
+        findings = get_inspector(profile, CFG).detect(img, valid);  lap("vision")
+        defects = map_to_board(findings, profile);                lap("mapping")
+        rec["defects"] = apply_rules(defects);                    lap("rules")
+        rec["verdict"] = RULES.board_verdict(rec["defects"])
+    else:
+        rec["verdict"], rec["invalid_reasons"] = INVALID, reasons
+    if img is not None:
+        rec["image"] = draw(img, rec["defects"]);              lap("draw")
+    timings["to_verdict"] = round(sum(timings.values()), 2)
+    rec["timings"], rec["versions"] = timings, versions(profile)
+    rec["id"] = log(rec)
+    return rec
+
+
+def advise(rec):
+    """Llama explanation for an inspection record (slow; run after the verdict is shown)."""
+    t = time.perf_counter()
+    if rec["verdict"] == INVALID:
+        advice = {"summary": "Photo not usable - no verdict given.",
+                  "risk": "Inspection not performed.",
+                  "actions": rec["invalid_reasons"] + ["Re-seat the board and inspect again."],
+                  "verdict": INVALID, "source": "template"}
+    else:
+        adv, source = ADVISOR.advise(rec["defects"], rec["verdict"])
+        advice = {**adv.model_dump(), "source": source}
+    rec["advice"] = advice
+    rec["timings"]["llm"] = round((time.perf_counter() - t) * 1000, 2)
+    rec["timings"]["total"] = round(rec["timings"]["to_verdict"] + rec["timings"]["llm"], 2)
+    update_advice(rec)
+    return advice
+
+
+def run_once(board_id=None, verbose=True, image=None):
+    rec = inspect(board_id, image)
+    advise(rec)
     if verbose:
-        show(defects, advice)
-        print("Board:", profile.id, "| verdict:", advice["verdict"])
-        print("Stage timings (ms):", timings)
-    return {"board": profile.id, "board_name": profile.name, "defects": defects,
-            "advice": advice, "timings": timings, "image": image_path}
+        print(json.dumps({"defects": rec["defects"], "advice": rec["advice"]}, indent=2))
+        print(f"Board: {rec['board']} ({rec['board_type']}, {rec['inspector']}) | "
+              f"verdict: {rec['verdict']}")
+        if rec["invalid_reasons"]:
+            print("Invalid capture:", "; ".join(rec["invalid_reasons"]))
+        print("Stage timings (ms):", rec["timings"])
+    return rec
 
 
 if __name__ == "__main__":

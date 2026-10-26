@@ -234,3 +234,6 @@ db/*.sqlite
 *.kicad_prl
 *-backups/
 hardware/testboard/drc_report.txt
+
+# inspection outputs
+results/*.png

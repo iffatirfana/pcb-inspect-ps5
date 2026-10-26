@@ -30,6 +30,20 @@ def scale_transform(mm_per_px, origin_px=(0.0, 0.0), flip_y=False, img_h=0):
                      [0, 0, 1]], dtype=float)
 
 
+def image_to_board(mm_per_px, origin_px=(0.0, 0.0), rotation_deg=0.0, flip_y=False):
+    """Pixel -> board-mm matrix for a fronto-parallel camera.
+
+    origin_px:    pixel (in the golden image) where board (0, 0) mm lies
+    rotation_deg: board rotation in the image (CAD +x axis measured from image +x)
+    flip_y:       True if CAD y grows upwards while image y grows downwards
+    """
+    t = np.radians(rotation_deg)
+    R = np.array([[np.cos(t), np.sin(t), 0], [-np.sin(t), np.cos(t), 0], [0, 0, 1]])
+    S = np.diag([mm_per_px, -mm_per_px if flip_y else mm_per_px, 1.0])
+    T = np.array([[1, 0, -origin_px[0]], [0, 1, -origin_px[1]], [0, 0, 1]], dtype=float)
+    return S @ R @ T
+
+
 class BoardMap:
     def __init__(self, board_dir, img_to_mm, pad_margin_mm=0.1, comp_radius_mm=3.0):
         board_dir = Path(board_dir)

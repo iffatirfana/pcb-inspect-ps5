@@ -24,7 +24,7 @@ class Advice(BaseModel):
     summary: str
     risk: str
     actions: List[str]
-    verdict: Literal["PASS", "REWORK", "REJECT"]
+    verdict: Literal["PASS", "REVIEW", "REWORK", "REJECT", "INVALID_CAPTURE"]
 
     @field_validator("actions")
     @classmethod

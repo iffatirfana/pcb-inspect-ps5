@@ -63,3 +63,52 @@ scratch:
   visual: Line or scuff exposing copper or fibre.
   typical_cause: Handling, fixtures, tools.
   risk: Exposed copper may corrode; cut trace causes an open circuit.
+unknown_anomaly:
+  name: Unknown anomaly
+  description: The board differs from the golden board here, but the classifier could not name it.
+  visual: Any visible difference from the known-good board.
+  typical_cause: Unseen defect type, debris, label/marking change, or glare.
+  risk: Unknown - needs a human decision.
+
+# ---- bare PCB defects (YOLO, board_type: bare) ----
+open_circuit:
+  name: Open circuit
+  description: A copper trace is broken or missing a section.
+  visual: Gap across a trace.
+  typical_cause: Over-etching, scratch, dust on the photo-tool.
+  risk: Net is disconnected; circuit will not work.
+
+short_circuit:
+  name: Short circuit (copper)
+  description: Unwanted copper joins two traces or pads.
+  visual: Copper bridge between neighbouring conductors.
+  typical_cause: Under-etching, photo-resist defect.
+  risk: Two nets connected; can damage parts at power-up.
+
+mouse_bite:
+  name: Mouse bite
+  description: Small bites missing from the edge of a trace.
+  visual: Notches along a conductor edge.
+  typical_cause: Etching irregularities.
+  risk: Reduced trace width; may fail under current or vibration.
+
+spur:
+  name: Spur
+  description: Small copper protrusion from a trace or pad.
+  visual: Thin copper finger sticking out of a conductor.
+  typical_cause: Etching irregularities.
+  risk: Reduced clearance; may short after assembly.
+
+spurious_copper:
+  name: Spurious copper
+  description: Isolated copper where none should be.
+  visual: Copper island between conductors.
+  typical_cause: Under-etching, contamination.
+  risk: Reduced clearance or short if near a conductor.
+
+pin_hole:
+  name: Pin hole
+  description: Small hole in copper or plating.
+  visual: Tiny void inside a pad or trace.
+  typical_cause: Plating or laminate defect.
+  risk: Usually cosmetic; large holes weaken the conductor.

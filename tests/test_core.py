@@ -148,3 +148,96 @@ def test_weak_summary_replaced(defects):
             return '{"summary": "Rework", "risk": "r", "actions": ["a"], "verdict": "REWORK"}'
     adv, src = Advisor(Weak()).advise(defects, "REWORK")
     assert src == "llm+summary" and "U3" in adv.summary and "3V3" in adv.summary
+
+
+# ---------- quality gate ----------
+def test_quality_gate_rejects_blur_and_dark():
+    from vision.quality import check_alignment, check_capture
+    img = cv2.imread("kb/boards/sample_synthetic/test_board.png")
+    assert check_capture(img)[0]
+    assert not check_capture(cv2.GaussianBlur(img, (0, 0), 6))[0]
+    assert not check_capture((img * 0.1).astype(np.uint8))[0]
+    assert not check_alignment({"inliers": 5, "reproj_err_px": 1.0})[0]
+
+
+# ---------- REVIEW / confidence ----------
+def test_unknown_and_low_confidence_go_to_review(engine):
+    assert engine.evaluate({"type": "unknown_anomaly", "conf": 0.9})["verdict"] == "REVIEW"
+    low = engine.evaluate({**BRIDGE, "nets": ["SDA", "SCL"], "conf": 0.3})
+    assert low["verdict"] == "REVIEW" and low["severity"] == "MAJOR"    # severity kept
+    assert engine.evaluate({"type": "short_circuit", "conf": 0.3})["verdict"] == "REJECT"
+    assert engine.board_verdict([{"verdict": "REVIEW"}, {"verdict": "PASS"}]) == "REVIEW"
+    assert engine.board_verdict([{"verdict": "REVIEW"}, {"verdict": "REWORK"}]) == "REWORK"
+
+
+# ---------- inspectors ----------
+def test_yolo_decode_and_nms():
+    from vision.inspectors import decode_yolo, nms
+    out = np.zeros((1, 4 + 2, 3), np.float32)
+    out[0, :4, 0], out[0, 5, 0] = [100, 100, 20, 10], 0.9
+    out[0, :4, 1], out[0, 5, 1] = [101, 100, 20, 10], 0.6     # duplicate of 0
+    out[0, :4, 2], out[0, 4, 2] = [300, 300, 20, 10], 0.1     # below threshold
+    dets = nms(decode_yolo(out, ["open_circuit", "short_circuit"], 0.25, offset=(640, 0)))
+    assert len(dets) == 1 and dets[0][2] == "short_circuit" and dets[0][0][0] == 730
+
+
+def test_classifier_without_model_is_unknown():
+    from vision.inspectors import Classifier
+    c = Classifier("models/does_not_exist.onnx", ["solder_bridge", "normal"])
+    assert c.classify(np.zeros((100, 100, 3), np.uint8), [40, 40, 60, 60]) == ("unknown_anomaly", None)
+
+
+def test_bare_board_routes_to_yolo(tmp_path):
+    from mapping.profiles import BoardProfile
+    from vision.inspectors import InspectorError, get_inspector
+    (tmp_path / "profile.yaml").write_text("name: t\nboard_type: bare\n")
+    p = BoardProfile(tmp_path)
+    assert p.inspector == "yolo"
+    with pytest.raises(InspectorError):
+        get_inspector(p, {"yolo": {"model": "models/does_not_exist.onnx"}})
+
+
+def test_golden_diff_finds_new_blob():
+    from vision.golden_diff import GoldenDiff
+
+    def colour_features(x):                       # stand-in for the CNN: 8x8 colour means
+        n, c, h, w = x.shape
+        f = x.reshape(n, c, h // 8, 8, w // 8, 8).mean((3, 5))
+        return np.concatenate([f, np.ones((n, 1, h // 8, w // 8), np.float32)], 1)
+
+    golden = cv2.imread("kb/boards/sample_synthetic/golden.png")
+    gd = GoldenDiff(extractor=colour_features)
+    gd.set_references([golden])
+    gd.calibrate([golden.copy()], margin=1.0)
+    gd.threshold = max(gd.threshold, 0.02)
+    bad = golden.copy()
+    cv2.circle(bad, (500, 400), 14, (230, 230, 230), -1)
+    boxes = gd.detect(gd.score(bad))
+    assert len(boxes) == 1
+    x1, y1, x2, y2 = boxes[0]["bbox"]
+    assert x1 < 500 < x2 and y1 < 400 < y2
+
+
+def test_image_to_board_transform():
+    from mapping.board_map import image_to_board
+    assert np.allclose(image_to_board(0.05, (10, 20)), scale_transform(0.05, (10, 20)))
+    T = image_to_board(0.1, (100, 100), rotation_deg=180)
+    assert np.allclose(T @ [110, 100, 1], [-1, 0, 1])
+
+
+# ---------- full pipeline ----------
+def test_pipeline_verdict_then_advice():
+    import pipeline
+    rec = pipeline.inspect("sample_synthetic")
+    assert rec["verdict"] == "REWORK" and rec["advice"] is None and rec["id"]
+    adv = pipeline.advise(rec)
+    assert adv["verdict"] == "REWORK" and "U3" in adv["summary"]
+    assert {"to_verdict", "llm", "total"} <= set(rec["timings"])
+
+
+def test_pipeline_invalid_capture():
+    import pipeline
+    assert pipeline.inspect("sample_synthetic", np.zeros((600, 800, 3), np.uint8))["verdict"] == "INVALID_CAPTURE"
+    flipped = cv2.flip(cv2.imread("kb/boards/sample_synthetic/golden.png"), 1)   # "wrong board"
+    rec = pipeline.inspect("sample_synthetic", flipped)
+    assert rec["verdict"] == "INVALID_CAPTURE" and rec["invalid_reasons"]

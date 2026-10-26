@@ -2,6 +2,11 @@
 
 Reads kb/acceptance.yaml. First matching rule wins. No AI here:
 the same input always gives the same decision.
+
+Verdicts, worst first: REJECT > REWORK > REVIEW > PASS.
+Confidence is kept separate from severity: severity comes from the rule; a
+finding whose detector confidence is below `review_below_conf` gets verdict
+REVIEW (a person decides) unless the rule already says REJECT.
 """
 import re
 from pathlib import Path
@@ -18,6 +23,9 @@ PACKAGE_CLASSES = [
     ("connector", re.compile(r"CONN|HEADER|PINHEADER|SOCKET|TERMINAL|USB|JST", re.I)),
     ("ic", re.compile(r"SOIC|SOT|SO-|DIP|TO-", re.I)),
 ]
+
+
+VERDICT_ORDER = {"PASS": 0, "REVIEW": 1, "REWORK": 2, "REJECT": 3}
 
 
 def package_class(package):
@@ -59,9 +67,21 @@ class RuleEngine:
         data = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
         self.rules = data["rules"]
         self.default = data["default"]
+        self.review_below_conf = data.get("review_below_conf")
 
     def evaluate(self, defect):
         """Return a copy of the defect with rule decision fields added."""
+        return self._confidence_check(self._match(defect))
+
+    def _confidence_check(self, d):
+        conf, limit = d.get("conf"), self.review_below_conf
+        if conf is not None and limit is not None and conf < limit and d["verdict"] != "REJECT":
+            note = f"Low detector confidence ({conf:.2f}) - confirm by eye."
+            return {**d, "verdict": "REVIEW", "sop_id": d.get("sop_id") or "SOP-REVIEW-01",
+                    "rule_note": f"{d['rule_note']} {note}" if d.get("rule_note") else note}
+        return d
+
+    def _match(self, defect):
         pclass = package_class(defect.get("package", ""))
         for rule in self.rules:
             if rule["defect"] != defect.get("type"):
@@ -79,7 +99,7 @@ class RuleEngine:
 
     def board_verdict(self, defects):
         """Worst verdict across all defects decides the board."""
-        order = {"PASS": 0, "REWORK": 1, "REJECT": 2}
+        order = VERDICT_ORDER
         return max((d["verdict"] for d in defects), key=order.get, default="PASS")
 
 

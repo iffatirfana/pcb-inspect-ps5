@@ -1,8 +1,12 @@
 # Synthetic demo board (generated image) - used by tests and laptop demos.
 name: Synthetic sample board
+board_type: assembled
+detector: demo                   # fixed example findings; remove to use golden-diff
 golden: golden.png
 sample_image: test_board.png     # used as the camera image off the Pi
 calibration:
   mm_per_px: 0.05                # 20 px per mm
-  origin_px: [0, 0]              # pixel that corresponds to board (0, 0) mm in pos/pads
-anomaly_bank: null               # Person 2: per-board PatchCore memory bank
+  origin_px: [0, 0]              # pixel of board (0, 0) mm in the golden image
+  rotation_deg: 0                # board rotation in the image
+  flip_y: false                  # true if CAD y points up in the image
+anomaly_threshold: null          # set by: python -m tools.setup_board <board>
