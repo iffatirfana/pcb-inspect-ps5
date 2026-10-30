@@ -101,9 +101,17 @@ class Camera:
 
 
 if __name__ == "__main__":
-    cam = Camera(fallback_image="kb/boards/sample_synthetic/test_board.png")
+    import yaml
+    c = yaml.safe_load(open("config.yaml", encoding="utf-8")).get("camera", {})
+    cam = Camera(width=c.get("width", 4056), height=c.get("height", 3040),
+                 source=c.get("source", "auto"), usb_index=c.get("usb_index", 0),
+                 usb_size=tuple(c.get("usb_size", (640, 480))),
+                 usb_exposure=c.get("usb_exposure"),
+                 fallback_image="kb/boards/sample_synthetic/test_board.png")
     img = cam.capture()
     print("source:", cam.source, "| shape:", img.shape)
+    if cam.reason:
+        print("note:", cam.reason)
     Path("results").mkdir(exist_ok=True)
     cv2.imwrite("results/capture_test.png", img)
     print("saved results/capture_test.png")
