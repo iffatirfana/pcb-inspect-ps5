@@ -226,8 +226,10 @@ def test_image_to_board_transform():
 
 
 # ---------- full pipeline ----------
-def test_pipeline_verdict_then_advice():
+def test_pipeline_verdict_then_advice(monkeypatch):
     import pipeline
+    from capture.camera import Camera
+    monkeypatch.setattr(pipeline, "CAMERA", Camera(source="file"))  # never the live camera
     rec = pipeline.inspect("sample_synthetic")
     assert rec["verdict"] == "REWORK" and rec["advice"] is None and rec["id"]
     adv = pipeline.advise(rec)
