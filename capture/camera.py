@@ -2,8 +2,9 @@
 
 source: auto    Picamera2 (HQ Camera) if present, else a file (default)
         picamera2 Picamera2 only
-        usb       USB/UVC webcam through OpenCV (V4L2), auto exposure/white
-                  balance/focus switched off where the camera allows it
+        usb       USB/UVC webcam through OpenCV (V4L2); autofocus off, exposure
+                  fixed if usb_exposure is set, white balance fixed only if
+                  usb_lock_wb is true
         file      always read the fallback image
 
 Fixed exposure/white balance so every shot is lit the same.
@@ -17,13 +18,14 @@ import cv2
 class Camera:
     def __init__(self, width=4056, height=3040, fallback_image=None,
                  exposure_us=None, gain=None, awb_gains=None,
-                 source="auto", usb_index=0, usb_size=(640, 480), usb_exposure=None):
+                 source="auto", usb_index=0, usb_size=(640, 480), usb_exposure=None,
+                 usb_lock_wb=False):
         self.fallback = Path(fallback_image) if fallback_image else None
         self.cam = None
         self.kind = None
         self.reason = ""
         if source == "usb":
-            self._open_usb(usb_index, usb_size, usb_exposure)
+            self._open_usb(usb_index, usb_size, usb_exposure, usb_lock_wb)
             return
         if source == "file":
             self.reason = "source=file"
@@ -50,7 +52,7 @@ class Camera:
             self.cam = None
             self.reason = f"camera unavailable ({e.__class__.__name__}); using file"
 
-    def _open_usb(self, index, size, exposure):
+    def _open_usb(self, index, size, exposure, lock_wb=False):
         try:
             cap = cv2.VideoCapture(int(index), cv2.CAP_V4L2)
             if not cap.isOpened():
@@ -59,7 +61,8 @@ class Camera:
             cap.set(cv2.CAP_PROP_FRAME_WIDTH, int(size[0]))
             cap.set(cv2.CAP_PROP_FRAME_HEIGHT, int(size[1]))
             cap.set(cv2.CAP_PROP_AUTOFOCUS, 0)       # ignored by cameras without these
-            cap.set(cv2.CAP_PROP_AUTO_WB, 0)
+            if lock_wb:                              # off by default: many webcams lock a wrong tint
+                cap.set(cv2.CAP_PROP_AUTO_WB, 0)
             if exposure is not None:
                 cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1)   # V4L2: 1 = manual
                 cap.set(cv2.CAP_PROP_EXPOSURE, float(exposure))
@@ -107,6 +110,7 @@ if __name__ == "__main__":
                  source=c.get("source", "auto"), usb_index=c.get("usb_index", 0),
                  usb_size=tuple(c.get("usb_size", (640, 480))),
                  usb_exposure=c.get("usb_exposure"),
+                 usb_lock_wb=c.get("usb_lock_wb", False),
                  fallback_image="kb/boards/sample_synthetic/test_board.png")
     img = cam.capture()
     print("source:", cam.source, "| shape:", img.shape)

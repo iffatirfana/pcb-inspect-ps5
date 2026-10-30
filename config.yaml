@@ -15,6 +15,7 @@ camera:
   usb_index: 0         # source: usb -> /dev/video<usb_index>
   usb_size: [640, 480] # USB webcam (HP w100 maxes out at 640x480)
   usb_exposure: null   # fixed exposure (V4L2 units); null = leave camera setting
+  usb_lock_wb: false   # true = switch auto white balance off (can cause a colour cast)
   calibration: kb/camera_calib.npz
 
 preprocess:

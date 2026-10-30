@@ -36,7 +36,8 @@ _CAM = CFG.get("camera", {})
 CAMERA = Camera(width=_CAM.get("width", 4056), height=_CAM.get("height", 3040),
                 source=_CAM.get("source", "auto"), usb_index=_CAM.get("usb_index", 0),
                 usb_size=tuple(_CAM.get("usb_size", (640, 480))),
-                usb_exposure=_CAM.get("usb_exposure"))   # HQ camera / USB webcam; else file
+                usb_exposure=_CAM.get("usb_exposure"),
+                usb_lock_wb=_CAM.get("usb_lock_wb", False))   # HQ camera / USB webcam; else file
 INVALID = "INVALID_CAPTURE"
 
 
