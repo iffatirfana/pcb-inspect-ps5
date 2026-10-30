@@ -241,3 +241,14 @@ def test_pipeline_invalid_capture():
     flipped = cv2.flip(cv2.imread("kb/boards/sample_synthetic/golden.png"), 1)   # "wrong board"
     rec = pipeline.inspect("sample_synthetic", flipped)
     assert rec["verdict"] == "INVALID_CAPTURE" and rec["invalid_reasons"]
+
+
+def test_camera_sources_fall_back_to_file():
+    from capture.camera import Camera
+    c = Camera(source="file", fallback_image="kb/boards/sample_synthetic/test_board.png")
+    assert c.cam is None and c.source.startswith("file:")
+    assert c.capture().ndim == 3
+    u = Camera(source="usb", usb_index=99,
+               fallback_image="kb/boards/sample_synthetic/test_board.png")
+    assert u.cam is None and "usb camera unavailable" in u.reason
+    assert u.capture().ndim == 3

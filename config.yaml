@@ -9,8 +9,12 @@ paths:
   db: db/inspections.sqlite
 
 camera:
+  source: auto         # auto (Picamera2 else file) | picamera2 | usb | file
   width: 4056          # Pi HQ Camera full resolution
   height: 3040
+  usb_index: 0         # source: usb -> /dev/video<usb_index>
+  usb_size: [640, 480] # USB webcam (HP w100 maxes out at 640x480)
+  usb_exposure: null   # fixed exposure (V4L2 units); null = leave camera setting
   calibration: kb/camera_calib.npz
 
 preprocess:

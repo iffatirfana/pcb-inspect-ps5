@@ -32,7 +32,11 @@ from vision.quality import check_alignment, check_capture
 CFG = yaml.safe_load(open("config.yaml", encoding="utf-8"))
 RULES = RuleEngine(str(Path(CFG["paths"]["kb_dir"]) / "acceptance.yaml"))
 PROFILES = list_profiles(CFG["paths"]["boards_dir"])
-CAMERA = Camera()                                     # Picamera2 on the Pi; None elsewhere
+_CAM = CFG.get("camera", {})
+CAMERA = Camera(width=_CAM.get("width", 4056), height=_CAM.get("height", 3040),
+                source=_CAM.get("source", "auto"), usb_index=_CAM.get("usb_index", 0),
+                usb_size=tuple(_CAM.get("usb_size", (640, 480))),
+                usb_exposure=_CAM.get("usb_exposure"))   # HQ camera / USB webcam; else file
 INVALID = "INVALID_CAPTURE"
 
 
@@ -66,7 +70,7 @@ def get_profile(board_id=None):
 
 # ---------------------------------------------------------------- stages
 def capture(profile):
-    """Pi: HQ camera. Elsewhere: the profile's sample image."""
+    """Pi: HQ camera or USB webcam (camera.source). Elsewhere: the profile's sample image."""
     if CAMERA.cam is not None:
         return CAMERA.capture()
     if profile.sample_image:
