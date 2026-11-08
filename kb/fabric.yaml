@@ -1,0 +1,40 @@
+# Fabric inspection settings. Placeholders marked TUNE must be set from real photos.
+fabric: white                 # default fabric key below
+
+fabrics:
+  white:
+    px_per_mm: 8.0            # TUNE: from the ruler photo (px_per_mm_from_ruler)
+    crop: null                # TUNE: [x, y, w, h] in camera pixels, or null for full frame
+    backbone_onnx: models/fabric_backbone.onnx
+    bank: models/bank_white.npy
+    threshold: 1.0            # TUNE: from Person 2's threshold_white.txt
+  purple:
+    px_per_mm: 8.0
+    crop: null
+    backbone_onnx: models/fabric_backbone.onnx
+    bank: models/bank_purple.npy
+    threshold: 1.0            # TUNE: threshold_purple.txt
+
+# Placeholders: tune on validation photos. Must match the SOP text below.
+rules:
+  min_area_mm2: 0.5
+  low_max_mm2: 2.0
+  medium_max_mm2: 10.0
+  max_defects_for_review: 3
+
+# Overrides config.yaml quality gate for fabric (PCB value 40 would reject most of our fabric photos:
+# measured median sharpness of the blue set is about 38). TUNE after the final photo set.
+quality:
+  min_sharpness: 12
+
+scorer:
+  work_size: [512, 512]       # crop is resized to this before the backbone
+  blur_ksize: 15              # heatmap smoothing (odd number)
+
+# One operator instruction per verdict. The verdict itself is never decided by the LLM.
+sop:
+  PASS: "No defect found. Release the piece."
+  REVIEW: "Small marks only. Operator checks by eye, then accepts or sends for rework."
+  REWORK: "Mark the defect position. Repair or trim, then re-inspect."
+  REJECT: "Large defect. Set the piece aside, record it, and do not release."
+  generic: "Record the defect position and the operator decision."
