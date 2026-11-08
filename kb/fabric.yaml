@@ -1,7 +1,18 @@
 # Fabric inspection settings. Placeholders marked TUNE must be set from real photos.
-fabric: white                 # default fabric key below
+fabric: blue                  # default fabric key below
 
 fabrics:
+  blue:
+    detector: yolo            # yolo = YOLOv8-seg (Hole/Knot/Line/Stain); anomaly = heatmap detector
+    yolo_model: models/best_169.onnx   # or best_a2.pt; same weights
+    yolo_conf: 0.5            # measured on our blue photos: 0 of 71 normals flagged at 0.5
+    yolo_imgsz: 640
+    px_per_mm: 8.0            # PLACEHOLDER: no ruler photo yet. Sizes in mm are NOT real.
+    calibrated: false         # set true after px_per_mm_from_ruler() on a real ruler photo
+    crop: null
+    backbone_onnx: models/fabric_backbone.onnx   # used only when detector: anomaly
+    bank: models/bank_blue.npy
+    threshold: 1.0            # TUNE: from Person 2's threshold_blue.txt
   white:
     px_per_mm: 8.0            # TUNE: from the ruler photo (px_per_mm_from_ruler)
     crop: null                # TUNE: [x, y, w, h] in camera pixels, or null for full frame

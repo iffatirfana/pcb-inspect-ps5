@@ -77,6 +77,57 @@ def findings_from_heatmap(heatmap, threshold, px_per_mm, rules=DEFAULT_RULES):
     return out
 
 
+def _iou(a, b):
+    ix = max(0.0, min(a[2], b[2]) - max(a[0], b[0]))
+    iy = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
+    inter = ix * iy
+    ua = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter
+    return inter / ua if ua > 0 else 0.0
+
+
+def findings_from_detections(dets, img_shape, px_per_mm, rules=DEFAULT_RULES, merge_iou=0.3):
+    """dets: list of {"type", "confidence", "box": (x1,y1,x2,y2), "polygon": Nx2 array or None}
+    in the pixel grid of the cropped photo (see fabric_yolo.YoloDetector).
+    Overlapping boxes (any class) are merged, keeping the most confident one.
+    Returns findings in the same schema as findings_from_heatmap, plus "type" and "confidence"."""
+    h, w = img_shape[:2]
+    kept = []
+    for d in sorted(dets, key=lambda d: d["confidence"], reverse=True):
+        if all(_iou(d["box"], k["box"]) < merge_iou for k in kept):
+            kept.append(d)
+    out = []
+    for d in kept:
+        x1, y1, x2, y2 = d["box"]
+        bw, bh = max(1.0, x2 - x1), max(1.0, y2 - y1)
+        poly = d.get("polygon")
+        if poly is not None and len(poly) >= 3:
+            cnt = np.asarray(poly, np.float32).reshape(-1, 1, 2)
+            area_px = float(cv2.contourArea(cnt))
+            m = cv2.moments(cnt)
+            cx, cy = ((m["m10"] / m["m00"], m["m01"] / m["m00"]) if m["m00"] > 0
+                      else ((x1 + x2) / 2, (y1 + y2) / 2))
+        else:
+            area_px, cx, cy = bw * bh, (x1 + x2) / 2, (y1 + y2) / 2
+        area_mm2 = area_px / (px_per_mm ** 2)
+        if area_mm2 < rules["min_area_mm2"]:
+            continue
+        out.append({
+            "type": d["type"],
+            "confidence": round(float(d["confidence"]), 2),
+            "area_mm2": round(area_mm2, 2),
+            "width_mm": round(bw / px_per_mm, 1),
+            "height_mm": round(bh / px_per_mm, 1),
+            "aspect": round(max(bw, bh) / max(1.0, min(bw, bh)), 1),
+            "x_mm": round(cx / px_per_mm, 1),
+            "y_mm": round(cy / px_per_mm, 1),
+            "zone": zone_3x3(cx, cy, w, h),
+            "peak_score": round(float(d["confidence"]), 3),
+            "severity": severity_from_area(area_mm2, rules),
+        })
+    out.sort(key=lambda f: f["area_mm2"], reverse=True)
+    return out
+
+
 def verdict_from_findings(findings, rules=DEFAULT_RULES):
     """PASS / REVIEW / REWORK / REJECT. Rule-based, never decided by the LLM."""
     if not findings:
@@ -98,8 +149,9 @@ def build_llm_payload(findings, verdict, fabric="white cotton", sop_text=""):
              "Verdict (fixed, do not change): %s" % verdict,
              "Findings: %d" % len(findings)]
     for i, f in enumerate(findings, 1):
-        lines.append("%d) %s severity, %.1f mm2 (%.1f x %.1f mm), at %s (x=%.1f, y=%.1f mm)"
-                     % (i, f["severity"], f["area_mm2"], f["width_mm"],
+        kind = ("%s, " % f["type"]) if f.get("type") else ""
+        lines.append("%d) %s%s severity, %.1f mm2 (%.1f x %.1f mm), at %s (x=%.1f, y=%.1f mm)"
+                     % (i, kind, f["severity"], f["area_mm2"], f["width_mm"],
                         f["height_mm"], f["zone"], f["x_mm"], f["y_mm"]))
     if sop_text:
         lines.append("SOP:\n" + sop_text)

@@ -3,7 +3,7 @@
   capture -> quality gate -> crop -> anomaly heatmap -> findings (mm) -> rules -> VERDICT
           -> Llama advice (afterwards; never changes the verdict) -> SQLite log
 
-Run:  python fabric_pipeline.py <fabric> [image.png]     (fabric: white | purple)
+Run:  python fabric_pipeline.py <fabric> [image.png]     (fabric: blue | white | purple)
 """
 import json
 import sqlite3
@@ -23,6 +23,7 @@ CFG = yaml.safe_load(open("config.yaml", encoding="utf-8"))
 FAB = yaml.safe_load(open("kb/fabric.yaml", encoding="utf-8"))
 INVALID = "INVALID_CAPTURE"
 _scorers = {}
+_detectors = {}
 
 
 def make_backend():
@@ -46,6 +47,16 @@ def get_scorer(fabric):
         _scorers[fabric] = FabricScorer(c["backbone_onnx"], c["bank"],
                                         FAB["scorer"]["work_size"], FAB["scorer"]["blur_ksize"])
     return _scorers[fabric]
+
+
+def get_detector(fabric):
+    """YOLO detector for fabrics whose config says detector: yolo."""
+    if fabric not in _detectors:
+        from fabric_yolo import YoloDetector
+        c = FAB["fabrics"][fabric]
+        _detectors[fabric] = YoloDetector(c["yolo_model"], conf=c.get("yolo_conf", 0.5),
+                                          imgsz=c.get("yolo_imgsz", 640))
+    return _detectors[fabric]
 
 
 def capture():
@@ -84,8 +95,9 @@ def operator_label(inspection_id, label):
     con.commit(); con.close()
 
 
-def inspect(fabric=None, image=None, scorer=None):
-    """Everything up to the verdict. Returns the record (already logged)."""
+def inspect(fabric=None, image=None, scorer=None, detector=None):
+    """Everything up to the verdict. Returns the record (already logged).
+    Fabrics with detector: yolo use the YOLO model; others use the anomaly heatmap."""
     fabric = fabric or FAB["fabric"]
     c, rules = FAB["fabrics"][fabric], FAB["rules"]
     t, timings = time.perf_counter(), {}
@@ -100,8 +112,13 @@ def inspect(fabric=None, image=None, scorer=None):
     ok, reasons, rec["quality"] = check_capture(img, {**(CFG.get("quality") or {}), **(FAB.get("quality") or {})});  lap("quality")
     if ok:
         img = fp.crop_image(img, c.get("crop"))
-        hm = (scorer or get_scorer(fabric)).heatmap(img);       lap("heatmap")
-        findings = fp.findings_from_heatmap(hm, c["threshold"], c["px_per_mm"], rules)
+        if c.get("detector", "anomaly") == "yolo":
+            dets = (detector or get_detector(fabric)).detect(img);   lap("detect")
+            findings = fp.findings_from_detections(dets, img.shape, c["px_per_mm"], rules)
+        else:
+            hm = (scorer or get_scorer(fabric)).heatmap(img);   lap("heatmap")
+            findings = fp.findings_from_heatmap(hm, c["threshold"], c["px_per_mm"], rules)
+        rec["uncalibrated"] = not c.get("calibrated", True)
         rec["findings"] = findings
         rec["verdict"] = fp.verdict_from_findings(findings, rules);  lap("rules")
         rec["image"] = _draw(img, findings, c["px_per_mm"]);    lap("draw")
@@ -122,7 +139,7 @@ def _draw(img, findings, ppm, path="results/last_fabric.png"):
         cx, cy = int(f["x_mm"] * ppm), int(f["y_mm"] * ppm)
         hw, hh = int(f["width_mm"] * ppm / 2) + 6, int(f["height_mm"] * ppm / 2) + 6
         cv2.rectangle(out, (cx - hw, cy - hh), (cx + hw, cy + hh), _COL[f["severity"]], 2)
-        cv2.putText(out, f"{f['severity']} {f['area_mm2']}mm2", (cx - hw, max(14, cy - hh - 6)),
+        cv2.putText(out, f"{f.get('type', '')} {f['severity']} {f['area_mm2']}mm2".strip(), (cx - hw, max(14, cy - hh - 6)),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, _COL[f["severity"]], 1, cv2.LINE_AA)
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     cv2.imwrite(path, out)
@@ -159,6 +176,8 @@ def run_once(fabric=None, image_path=None, verbose=True):
     if verbose:
         print(json.dumps({"findings": rec["findings"], "advice": rec["advice"]}, indent=2))
         print(f"Fabric: {rec['fabric']} | verdict: {rec['verdict']}")
+        if rec.get("uncalibrated"):
+            print("WARNING: px_per_mm is a placeholder - sizes in mm are NOT real until a ruler photo is used.")
         if rec["invalid_reasons"]:
             print("Invalid capture:", "; ".join(rec["invalid_reasons"]))
         print("Stage timings (ms):", rec["timings"])

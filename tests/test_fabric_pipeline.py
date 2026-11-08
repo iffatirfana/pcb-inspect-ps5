@@ -91,3 +91,54 @@ def test_payload_length_fits_prompt_budget():
     p = fp.build_llm_payload(rec["findings"][:5], rec["verdict"], "white",
                              fpl.FAB["sop"][rec["verdict"]])
     assert len(p) < 1100
+
+
+class FakeDetector:
+    """Returns fixed detections (box in px; polygon = same rectangle)."""
+    def __init__(self, dets):
+        self.dets = dets
+
+    def detect(self, img):
+        return self.dets
+
+
+def det(kind, conf, x1, y1, x2, y2):
+    poly = np.array([[x1, y1], [x2, y1], [x2, y2], [x1, y2]], np.float32)
+    return {"type": kind, "confidence": conf, "box": (x1, y1, x2, y2), "polygon": poly}
+
+
+def test_yolo_route_hole_is_rejected_when_large_and_named():
+    # 40 x 40 px at 8 px/mm placeholder = 25 mm2 -> High -> REJECT; defect type kept
+    rec = fpl.inspect("blue", good_img(), detector=FakeDetector([det("Hole", 0.8, 100, 100, 140, 140)]))
+    assert rec["verdict"] == "REJECT"
+    assert rec["findings"][0]["type"] == "Hole" and rec["findings"][0]["confidence"] == 0.8
+    assert rec["uncalibrated"] is True
+    assert "detect" in rec["timings"]
+    a = fpl.advise(rec, adv())
+    assert a["verdict"] == "REJECT"
+
+
+def test_yolo_route_clean_photo_passes():
+    rec = fpl.inspect("blue", good_img(), detector=FakeDetector([]))
+    assert rec["verdict"] == "PASS" and rec["findings"] == []
+
+
+def test_duplicate_boxes_on_one_defect_are_merged():
+    dets = [det("Hole", 0.64, 100, 100, 140, 140), det("Hole", 0.60, 102, 101, 142, 141),
+            det("Stain", 0.55, 98, 99, 138, 139)]
+    rec = fpl.inspect("blue", good_img(), detector=FakeDetector(dets))
+    assert len(rec["findings"]) == 1 and rec["findings"][0]["type"] == "Hole"
+
+
+def test_two_separate_defects_both_kept_and_payload_names_type():
+    dets = [det("Hole", 0.8, 100, 100, 112, 112), det("Line", 0.6, 600, 300, 640, 306)]
+    rec = fpl.inspect("blue", good_img(), detector=FakeDetector(dets))
+    assert {f["type"] for f in rec["findings"]} == {"Hole", "Line"}
+    p = fp.build_llm_payload(rec["findings"], rec["verdict"], "blue", fpl.FAB["sop"][rec["verdict"]])
+    assert "Hole," in p and "Line," in p and len(p) < 1100
+
+
+def test_specks_below_min_area_are_ignored():
+    # 3 x 3 px = 0.14 mm2 at 8 px/mm < min_area 0.5
+    rec = fpl.inspect("blue", good_img(), detector=FakeDetector([det("Hole", 0.9, 100, 100, 103, 103)]))
+    assert rec["verdict"] == "PASS"

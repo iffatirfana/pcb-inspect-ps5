@@ -52,7 +52,7 @@ class FabricAdvisor:
         if verdict == "PASS":
             return Advice(summary="No defects found.", risk="None.",
                           actions=[self.sop["PASS"]], verdict=verdict)
-        parts = [f"{f['severity']} defect {f['area_mm2']} mm2 at {f['zone']}" for f in findings]
+        parts = [f"{f['severity']} {f.get('type', 'defect')} {f['area_mm2']} mm2 at {f['zone']}" for f in findings]
         return Advice(summary="; ".join(parts) + ".", risk="See SOP.",
                       actions=[self.sop[verdict], self.sop["generic"]], verdict=verdict)
 
