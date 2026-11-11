@@ -6,6 +6,7 @@
 Run:  python fabric_pipeline.py <fabric> [image.png]     (fabric: blue | white | purple)
 """
 import json
+import os
 import sqlite3
 import sys
 import time
@@ -146,6 +147,17 @@ def _draw(img, findings, ppm, path="results/last_fabric.png"):
     return path
 
 
+_advisor = None
+
+
+def get_advisor():
+    """One advisor (and one loaded Llama) for the whole process."""
+    global _advisor
+    if _advisor is None:
+        _advisor = FabricAdvisor(make_backend()[0], FAB["sop"])
+    return _advisor
+
+
 def advise(rec, advisor=None, backend_name="mock"):
     t = time.perf_counter()
     if rec["verdict"] == INVALID:
@@ -154,7 +166,7 @@ def advise(rec, advisor=None, backend_name="mock"):
                "source": "template"}
     else:
         if advisor is None:
-            advisor = FabricAdvisor(make_backend()[0], FAB["sop"])
+            advisor = get_advisor()
         payload = fp.build_llm_payload(rec["findings"][:5], rec["verdict"], fabric=rec["fabric"],
                                        sop_text=FAB["sop"][rec["verdict"]])
         a, src = advisor.advise(payload, rec["findings"], rec["verdict"])
@@ -184,5 +196,42 @@ def run_once(fabric=None, image_path=None, verbose=True):
     return rec
 
 
+def live(fabric, index=0):
+    """Webcam loop: Enter = inspect one frame, q = quit. Keeps the model loaded."""
+    cap = cv2.VideoCapture(index, cv2.CAP_V4L2)
+    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
+    if not cap.isOpened():
+        print("Camera not found")
+        return
+    n = 0
+    try:
+        while input("Enter = inspect, q = quit: ").strip().lower() != "q":
+            for _ in range(5):          # drop stale buffered frames
+                cap.read()
+            ok, frame = cap.read()
+            if not ok:
+                print("No frame")
+                continue
+            n += 1
+            os.makedirs("results", exist_ok=True)
+            path = f"results/live_{n:03d}.jpg"
+            cv2.imwrite(path, frame)
+            run_once(fabric, path)
+    finally:
+        cap.release()
+
+
 if __name__ == "__main__":
-    run_once(sys.argv[1] if len(sys.argv) > 1 else None, sys.argv[2] if len(sys.argv) > 2 else None)
+    args = sys.argv[1:]
+    fab = args[0] if args else None
+    rest = args[1:]
+    if "--live" in rest:
+        live(fab)
+    elif len(rest) > 1:                 # several photos in one process (model stays loaded)
+        for pth in rest:
+            print("==", pth)
+            run_once(fab, pth)
+    else:
+        run_once(fab, rest[0] if rest else None)

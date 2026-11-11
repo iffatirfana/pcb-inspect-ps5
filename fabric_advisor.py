@@ -75,6 +75,8 @@ class FabricAdvisor:
 
     def advise(self, payload, findings, verdict):
         """Returns (Advice, source) with source 'llm' | 'llm_retry' | 'template'."""
+        if verdict == "PASS":      # nothing to explain: fixed SOP line, no model call
+            return self.template(findings, verdict), "template"
         prompt = self.build_prompt(payload)
         for src in ("llm", "llm_retry"):
             adv = self.validate(self.backend.generate(prompt), verdict, findings)
