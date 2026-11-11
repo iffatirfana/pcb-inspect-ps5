@@ -68,4 +68,4 @@ llm:
   hf_repo: iffatirfana/pcb-inspect-ps5-models
   max_new_tokens: 150
   temperature: 0.0
-  context_length: 512
+  context_length: 128   # measured on the Pi: prompt + reply stop at ~127 tokens

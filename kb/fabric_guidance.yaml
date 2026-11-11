@@ -1,0 +1,32 @@
+# Per-defect guidance shown on the dashboard. Written by rules, not by the language model.
+# status: DRAFT - confirm wording with the mentor or a quality operator before the demo.
+status: draft
+
+verdict_action:        # what the operator does for each verdict
+  PASS:    {disposition: "Release",                        urgency: "Routine"}
+  REVIEW:  {disposition: "Hold for supervisor check",      urgency: "Normal"}
+  REWORK:  {disposition: "Send to repair, then re-inspect", urgency: "High"}
+  REJECT:  {disposition: "Set aside, tag and record",      urgency: "Immediate"}
+
+defects:
+  Hole:
+    check: "Look for fraying at the edges and whether the hole is larger than it looks."
+    likely_cause: "Snag, needle damage or a machine tear."
+    route: {Low: "Mend (darn or patch).", Medium: "Patch or darn, then re-inspect.", High: "Cut out the section or scrap it."}
+  Knot:
+    check: "Look for raised or loose yarn that can be trimmed."
+    likely_cause: "Yarn joint or slub from weaving."
+    route: {Low: "Trim the knot.", Medium: "Trim and re-inspect.", High: "Re-weave the area or downgrade the piece."}
+  Line:
+    check: "Check the length and direction of the pulled thread or crease line."
+    likely_cause: "Loose or broken yarn, or a pressing crease."
+    route: {Low: "Trim the loose thread.", Medium: "Trim or re-weave, then re-inspect.", High: "Downgrade or scrap the section."}
+  Stain:
+    check: "Check whether the stain washes out (oil, dye or dirt)."
+    likely_cause: "Machine oil, dye or dirt transfer."
+    route: {Low: "Spot-clean.", Medium: "Clean and re-inspect.", High: "Downgrade or scrap if it is permanent."}
+
+default:
+  check: "Inspect the marked area by eye."
+  likely_cause: "Unknown."
+  route: {Low: "Operator decides.", Medium: "Send for repair.", High: "Set aside."}

@@ -78,7 +78,7 @@ python -m venv .venv
 
 ## Llama model
 
-Llama 3.2 1B Instruct exported with ExecuTorch 1.5.1 (PyTorch 2.14.0): `llama_q8da4w` config (8-bit dynamic activations, 4-bit grouped weights, group size 128, 4-bit embeddings), KV cache with SDPA, XNNPACK backend, 512-token context. Size: 2.4 GB checkpoint → about 0.77 GB `.pte`. Model files are stored outside this repository.
+Llama 3.2 1B Instruct exported with ExecuTorch 1.5.1 (PyTorch 2.14.0): `llama_q8da4w` config (8-bit dynamic activations, 4-bit grouped weights, group size 128, 4-bit embeddings), KV cache with SDPA, XNNPACK backend, exported with a 512-token setting, but measured on the Pi the effective context is 128 tokens (prompt plus reply stop at about 127; prompts of 162 tokens fail), so the advice prompt is kept to about 80 tokens. Size: 2.4 GB checkpoint → about 0.77 GB `.pte`. Model files are stored outside this repository.
 
 ## Status
 
