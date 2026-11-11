@@ -8,6 +8,7 @@ Files (download once from the private HF repo, see download_models()):
     models/llama3_2_1b_q8da4w_512.pte
     models/tokenizer.model
 """
+import json
 import os
 import re
 import shutil
@@ -18,6 +19,7 @@ from pathlib import Path
 from llm.advisor import Backend
 
 STOP_MARKERS = ("<|eot_id|>", "<|end_of_text|>")
+MAX_CTX = 128   # this .pte stops at 128 tokens in total (prompt + reply)
 
 
 def download_models(repo="iffatirfana/pcb-inspect-ps5-models", out="models",
@@ -51,7 +53,7 @@ class ExecuTorchBackend(Backend):
                f"--model_path={self.pte}",
                f"--tokenizer_path={self.tokenizer}",
                f"--prompt={prompt}",
-               f"--seq_len={min(512, n_prompt_tokens + self.max_new_tokens + 32)}",
+               f"--seq_len={MAX_CTX - 1}",
                f"--temperature={self.temperature}",
                f"--cpu_threads={self.threads}"]
         t0 = time.perf_counter()
@@ -61,9 +63,22 @@ class ExecuTorchBackend(Backend):
         # runner echoes the prompt first; keep only the generated part
         if prompt.strip() and prompt.strip()[-40:] in out:
             out = out.split(prompt.strip()[-40:], 1)[1]
+        out = re.sub(r"PyTorchObserver.*", "", out, flags=re.S)
         for m in STOP_MARKERS:
             out = out.split(m)[0]
         self.last_stats = {"wall_s": round(wall, 2), **self._parse_stats(res.stdout + res.stderr)}
+        m = re.search(r"PyTorchObserver\s*(\{.*\})", res.stdout + res.stderr, re.S)
+        if m:
+            try:
+                o = json.loads(m.group(1))
+                self.last_stats.update({
+                    "prompt_tokens": o.get("prompt_tokens"),
+                    "generated_tokens": o.get("generated_tokens"),
+                    "prefill_tok_per_s": o.get("prefill_token_per_sec"),
+                    "decode_tok_per_s": o.get("decode_token_per_sec"),
+                    "load_s": round((o["model_load_end_ms"] - o["model_load_start_ms"]) / 1000, 2)})
+            except Exception:
+                pass
         return out.strip()
 
     @staticmethod

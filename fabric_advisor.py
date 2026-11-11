@@ -5,11 +5,7 @@ import re
 
 from llm.advisor import Advice, Backend
 
-SYSTEM = ("You are an assistant for a fabric inspection station. Use ONLY the facts given. "
-          "Never change the verdict. Reply with JSON only: "
-          '{"summary": str, "risk": str, "actions": [str], "verdict": str}. '
-          "actions: 2 or 3 short operator steps that follow the SOP and verdict. "
-          "Name each defect position by its zone. Do not invent defects or numbers.")
+SYSTEM = "Operator assistant. Reply with 2 short numbered actions only."
 
 
 class FabricMockBackend(Backend):
@@ -20,7 +16,7 @@ class FabricMockBackend(Backend):
     def generate(self, prompt):
         if self.mode == "bad":
             return "Looks fine, ship it."
-        v = re.search(r"Verdict \(fixed, do not change\): (\w+)", prompt).group(1)
+        v = re.search(r"Verdict: (\w+)", prompt).group(1)
         return json.dumps({"summary": f"Verdict {v}.", "risk": "See findings.",
                            "actions": ["Follow the SOP step for this verdict."], "verdict": v})
 
@@ -30,23 +26,44 @@ class FabricAdvisor:
         self.backend, self.sop = backend, sop
 
     def build_prompt(self, payload):
+        # The .pte has a 128-token context (prompt + reply), so keep the prompt short.
         return ("<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n"
                 f"{SYSTEM}<|eot_id|><|start_header_id|>user<|end_header_id|>\n\n"
-                f"{payload[:1100]}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n")
+                f"{payload[:400]}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n")
 
-    def validate(self, raw, verdict):
-        m = re.search(r"\{.*\}", raw, re.S)
-        if not m:
+    def validate(self, raw, verdict, findings=None):
+        """JSON reply (mock / larger models) or numbered action lines (128-token model).
+        Summary, risk and verdict always come from the rules; the model words the actions."""
+        raw = raw.strip()
+        if "{" in raw:
+            m = re.search(r"\{.*\}", raw, re.S)
+            if not m:
+                return None
+            try:
+                adv = Advice(**json.loads(m.group(0)))
+            except Exception:
+                return None
+            if adv.verdict != verdict:
+                return None
+            if verdict != "PASS" and not adv.actions:
+                return None
+            return adv
+        lines = []
+        for ln in raw.splitlines():
+            ln = re.sub(r"^\s*(?:\d+[.)]|[-*\u2022])\s*", "", ln).strip().strip('"')
+            if len(ln) >= 8 and not ln.endswith(":"):
+                lines.append(ln[:140])
+        lines = lines[:3]
+        if not lines:
             return None
-        try:
-            adv = Advice(**json.loads(m.group(0)))
-        except Exception:
+        text = " ".join(lines).lower()
+        negated = re.search(r"\b(not|n't|never|until|before|hold|no)\b", text)
+        if verdict != "PASS" and re.search(r"\b(release|ship|approve|accept|pass)\b", text) and not negated:
             return None
-        if adv.verdict != verdict:
+        if verdict == "PASS" and re.search(r"\b(reject|rework|scrap|set the piece aside)\b", text):
             return None
-        if verdict != "PASS" and not adv.actions:
-            return None
-        return adv
+        base = self.template(findings or [], verdict)
+        return Advice(summary=base.summary, risk=base.risk, actions=lines, verdict=verdict)
 
     def template(self, findings, verdict):
         if verdict == "PASS":
@@ -60,7 +77,7 @@ class FabricAdvisor:
         """Returns (Advice, source) with source 'llm' | 'llm_retry' | 'template'."""
         prompt = self.build_prompt(payload)
         for src in ("llm", "llm_retry"):
-            adv = self.validate(self.backend.generate(prompt), verdict)
+            adv = self.validate(self.backend.generate(prompt), verdict, findings)
             if adv:
                 return adv, src
         return self.template(findings, verdict), "template"

@@ -143,19 +143,16 @@ def verdict_from_findings(findings, rules=DEFAULT_RULES):
 
 
 def build_llm_payload(findings, verdict, fabric="white cotton", sop_text=""):
-    """Structured input for the advice step. Verdict is fixed here and must
-    be repeated, not changed, by the model."""
-    lines = ["Fabric: %s" % fabric,
-             "Verdict (fixed, do not change): %s" % verdict,
-             "Findings: %d" % len(findings)]
-    for i, f in enumerate(findings, 1):
+    """Compact input for the advice step (the Llama .pte accepts only a short prompt,
+    about 100 tokens). Verdict is fixed here and must be repeated, not changed."""
+    lines = ["Fabric: %s" % fabric, "Verdict: %s" % verdict]
+    for i, f in enumerate(findings[:2], 1):
         kind = ("%s, " % f["type"]) if f.get("type") else ""
-        lines.append("%d) %s%s severity, %.1f mm2 (%.1f x %.1f mm), at %s (x=%.1f, y=%.1f mm)"
-                     % (i, kind, f["severity"], f["area_mm2"], f["width_mm"],
-                        f["height_mm"], f["zone"], f["x_mm"], f["y_mm"]))
+        lines.append("%d) %s%s, %.0f mm2, %s" % (i, kind, f["severity"], f["area_mm2"], f["zone"]))
+    if len(findings) > 2:
+        lines.append("+%d more" % (len(findings) - 2))
     if sop_text:
-        lines.append("SOP:\n" + sop_text)
-    lines.append("Task: give 2-3 short operator actions consistent with the verdict.")
+        lines.append("SOP: " + sop_text)
     return "\n".join(lines)
 
 

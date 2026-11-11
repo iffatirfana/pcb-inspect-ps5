@@ -61,7 +61,7 @@ def test_zone_and_position():
 def test_payload_contains_fixed_verdict():
     hm = blank(); blob(hm, 10, 10, 40)
     r = inspect(hm, 0.5, PPM, fabric="white", sop_text="Mark and set aside.")
-    assert "REJECT" in r["llm_payload"] and "do not change" in r["llm_payload"]
+    assert "Verdict: REJECT" in r["llm_payload"]
     assert "Mark and set aside." in r["llm_payload"]
 
 
