@@ -27,6 +27,8 @@ def good_img():
 @pytest.fixture(autouse=True)
 def tmp_db(tmp_path, monkeypatch):
     monkeypatch.setitem(fpl.CFG["paths"], "db", str(tmp_path / "t.sqlite"))
+    # the real second-opinion model is off in these tests; the anomaly tests below use a fake scorer
+    monkeypatch.setitem(fpl.FAB["fabrics"]["blue"]["anomaly"], "enabled", False)
 
 
 def adv():
@@ -142,3 +144,64 @@ def test_specks_below_min_area_are_ignored():
     # 3 x 3 px = 0.14 mm2 at 8 px/mm < min_area 0.5
     rec = fpl.inspect("blue", good_img(), detector=FakeDetector([det("Hole", 0.9, 100, 100, 103, 103)]))
     assert rec["verdict"] == "PASS"
+
+
+# ---- anomaly second opinion (REVIEW-only) ----
+def anomaly_on(monkeypatch):
+    monkeypatch.setitem(fpl.FAB["fabrics"]["blue"]["anomaly"], "enabled", True)
+
+
+def test_anomaly_flag_on_clean_detector_raises_pass_to_review(monkeypatch):
+    anomaly_on(monkeypatch)
+    rec = fpl.inspect("blue", good_img(), detector=FakeDetector([]), anomaly_scorer=FakeScorer(200, 300, 200))
+    assert rec["verdict"] == "REVIEW" and rec["anomaly"]["flagged"] is True
+    assert rec["findings"] and all(f["type"] == "Anomaly" and f["severity"] == "Low" for f in rec["findings"])
+    assert "anomaly" in rec["timings"]
+    a = fpl.advise(rec, adv())
+    assert a["verdict"] == "REVIEW"
+
+
+def test_anomaly_cannot_exceed_review_even_for_a_huge_region(monkeypatch):
+    anomaly_on(monkeypatch)
+    rec = fpl.inspect("blue", good_img(), detector=FakeDetector([]), anomaly_scorer=FakeScorer(500, 10, 10))
+    assert rec["verdict"] == "REVIEW"                    # a 500 px square is far above the High area limit
+    assert len(rec["findings"]) <= 3
+
+
+def test_anomaly_quiet_keeps_pass(monkeypatch):
+    anomaly_on(monkeypatch)
+    rec = fpl.inspect("blue", good_img(), detector=FakeDetector([]), anomaly_scorer=FakeScorer(0))
+    assert rec["verdict"] == "PASS" and rec["anomaly"]["flagged"] is False and rec["findings"] == []
+
+
+def test_anomaly_not_run_when_detector_found_a_defect(monkeypatch):
+    anomaly_on(monkeypatch)
+    class Boom:
+        def heatmap(self, img): raise AssertionError("anomaly must not run after a detection")
+    rec = fpl.inspect("blue", good_img(), detector=FakeDetector([det("Hole", 0.8, 100, 100, 140, 140)]),
+                      anomaly_scorer=Boom())
+    assert rec["verdict"] == "REJECT" and "anomaly" not in rec and rec["findings"][0]["type"] == "Hole"
+
+
+def test_anomaly_missing_files_is_skipped_quietly(monkeypatch):
+    anomaly_on(monkeypatch)
+    monkeypatch.setitem(fpl._anomaly, "blue", None)
+    rec = fpl.inspect("blue", good_img(), detector=FakeDetector([]))
+    assert rec["verdict"] == "PASS" and "anomaly" not in rec
+
+
+def test_anomaly_not_run_on_invalid_capture(monkeypatch):
+    anomaly_on(monkeypatch)
+    class Boom:
+        def heatmap(self, img): raise AssertionError("must not score a bad photo")
+    flat = np.full((540, 960, 3), 120, np.uint8)
+    rec = fpl.inspect("blue", flat, detector=FakeDetector([]), anomaly_scorer=Boom())
+    assert rec["verdict"] == fpl.INVALID
+
+
+def test_anomaly_finding_works_with_dashboard_actions(monkeypatch):
+    import fabric_actions as fa
+    anomaly_on(monkeypatch)
+    rec = fpl.inspect("blue", good_img(), detector=FakeDetector([]), anomaly_scorer=FakeScorer(200, 300, 200))
+    act = fa.structured_action(rec["findings"], rec["verdict"], fa.load_guidance())
+    assert act["items"][0]["type"] == "Anomaly" and "Operator decides" in act["items"][0]["route"]

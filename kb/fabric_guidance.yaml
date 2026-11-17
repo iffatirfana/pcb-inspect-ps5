@@ -25,6 +25,10 @@ defects:
     check: "Check whether the stain washes out (oil, dye or dirt)."
     likely_cause: "Machine oil, dye or dirt transfer."
     route: {Low: "Spot-clean.", Medium: "Clean and re-inspect.", High: "Downgrade or scrap if it is permanent."}
+  Anomaly:               # second-opinion model; the detector found no defect class here
+    check: "Look at the marked area by eye: the second model sees an unusual texture the detector did not name."
+    likely_cause: "Unconfirmed. May be a weave or print irregularity, or a defect the detector missed."
+    route: {Low: "Operator decides: accept or send for repair.", Medium: "Operator decides: accept or send for repair.", High: "Operator decides: accept or send for repair."}
 
 default:
   check: "Inspect the marked area by eye."

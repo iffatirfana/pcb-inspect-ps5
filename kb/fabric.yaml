@@ -13,6 +13,16 @@ fabrics:
     backbone_onnx: models/fabric_backbone.onnx   # used only when detector: anomaly
     bank: models/bank_blue.npy
     threshold: 1.0            # TUNE: from Person 2's threshold_blue.txt
+    # Second opinion (REVIEW-only): runs only when YOLO finds nothing; can raise PASS -> REVIEW, never more.
+    # Backbone: ResNet18 layer2+layer3 (from Person 2). Bank: 5000 vectors, greedy coreset of the 51 blue
+    # TRAIN photos only (no val/test/defect photos). Pixel threshold chosen on the 10 VAL photos only.
+    # Held-out result: val 0/10 flagged, test 2/10 flagged, holes 15/15, threads 6/6 (small set, same fabric).
+    anomaly:
+      enabled: true
+      backbone_onnx: models/anomaly/resnet18_fused.onnx
+      bank: models/anomaly/bank_blue_trainonly.npy
+      pixel_threshold: 2.463  # heatmap value above which a pixel counts as abnormal
+      image_fraction: 0.015   # flag the photo when more than 1.5% of its pixels are abnormal
   white:
     px_per_mm: 8.0            # TUNE: from the ruler photo (px_per_mm_from_ruler)
     crop: null                # TUNE: [x, y, w, h] in camera pixels, or null for full frame

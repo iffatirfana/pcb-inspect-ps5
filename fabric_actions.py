@@ -33,7 +33,7 @@ def structured_action(findings, verdict, guidance, uncalibrated=False):
             "route": g["route"].get(f["severity"], guidance["default"]["route"][f["severity"]]),
         })
     notes = []
-    if any(f.get("confidence", 1.0) < LOW_CONFIDENCE for f in findings):
+    if any((f.get("confidence") if f.get("confidence") is not None else 1.0) < LOW_CONFIDENCE for f in findings):
         notes.append("Low detector confidence on at least one finding: confirm by eye.")
     if uncalibrated:
         notes.append("Scale not calibrated: sizes in mm are estimates.")

@@ -17,6 +17,7 @@ class FakeDet:
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     monkeypatch.setitem(fpipe.CFG["paths"], "db", str(tmp_path / "t.sqlite"))
+    monkeypatch.setitem(fpipe.FAB["fabrics"]["blue"]["anomaly"], "enabled", False)   # real model off in UI tests
     monkeypatch.chdir(tmp_path) if False else None
     fabric_app.STATE.update({"rec": None, "action": None, "error": None})
     app = fabric_app.app
@@ -60,3 +61,14 @@ def test_label_and_history(client, monkeypatch):
     client.post("/label", data={"kind": "correct"})
     html = client.get("/").get_data(as_text=True)
     assert "correct" in html
+
+
+def test_anomaly_only_flag_shows_review_and_note(client, monkeypatch):
+    monkeypatch.setitem(fpipe.FAB["fabrics"]["blue"]["anomaly"], "enabled", True)
+    class Hot:
+        def heatmap(self, img):
+            hm = np.zeros(img.shape[:2], np.float32); hm[200:600, 300:900] = 9.0
+            return hm
+    monkeypatch.setitem(fpipe._anomaly, "blue", Hot())
+    html = post(client, monkeypatch, []).get_data(as_text=True)
+    assert "REVIEW" in html and "Anomaly" in html and "second-opinion" in html

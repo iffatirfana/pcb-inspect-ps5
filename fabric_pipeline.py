@@ -14,6 +14,7 @@ from datetime import datetime
 from pathlib import Path
 
 import cv2
+import numpy as np
 import yaml
 
 import fabric_profile as fp
@@ -25,6 +26,7 @@ FAB = yaml.safe_load(open("kb/fabric.yaml", encoding="utf-8"))
 INVALID = "INVALID_CAPTURE"
 _scorers = {}
 _detectors = {}
+_anomaly = {}
 
 
 def make_backend():
@@ -48,6 +50,45 @@ def get_scorer(fabric):
         _scorers[fabric] = FabricScorer(c["backbone_onnx"], c["bank"],
                                         FAB["scorer"]["work_size"], FAB["scorer"]["blur_ksize"])
     return _scorers[fabric]
+
+
+def get_anomaly_scorer(fabric):
+    """Second-opinion scorer (memory-bank heatmap), or None when disabled or its files are missing."""
+    if fabric not in _anomaly:
+        a = FAB["fabrics"][fabric].get("anomaly") or {}
+        sc = None
+        if a.get("enabled") and Path(a["backbone_onnx"]).exists() and Path(a["bank"]).exists():
+            from fabric_scorer import FabricScorer
+            sc = FabricScorer(a["backbone_onnx"], a["bank"], FAB["scorer"]["work_size"],
+                              FAB["scorer"]["blur_ksize"])
+        _anomaly[fabric] = sc
+    return _anomaly[fabric]
+
+
+def anomaly_second_opinion(img, fabric, px_per_mm, rules, scorer=None):
+    """Run only when the detector found nothing. Returns None when unavailable, otherwise
+    {"flagged": bool, "fraction": float, "max": float, "findings": [...]}.
+    A flagged photo yields up to 3 findings of type 'Anomaly', always severity Low: the caller
+    sets the verdict to REVIEW, so this check can never cause REWORK or REJECT."""
+    a = FAB["fabrics"][fabric].get("anomaly") or {}
+    scorer = scorer or get_anomaly_scorer(fabric)
+    if scorer is None:
+        return None
+    hm = scorer.heatmap(img)
+    fraction = float((hm > a["pixel_threshold"]).mean())
+    out = {"flagged": fraction > a["image_fraction"], "fraction": round(fraction, 4),
+           "max": round(float(hm.max()), 3), "findings": []}
+    if out["flagged"]:
+        fnd = fp.findings_from_heatmap(hm, a["pixel_threshold"], px_per_mm, rules)[:3]
+        if not fnd:                                   # flagged by many tiny regions: mark the peak
+            y, x = np.unravel_index(int(hm.argmax()), hm.shape)
+            fnd = [{"area_mm2": 0.0, "width_mm": 0.0, "height_mm": 0.0, "aspect": 1.0,
+                    "x_mm": round(x / px_per_mm, 1), "y_mm": round(y / px_per_mm, 1),
+                    "zone": fp.zone_3x3(x, y, hm.shape[1], hm.shape[0]), "peak_score": out["max"]}]
+        for f in fnd:
+            f.update(type="Anomaly", severity="Low", confidence=None)
+        out["findings"] = fnd
+    return out
 
 
 def get_detector(fabric):
@@ -96,7 +137,7 @@ def operator_label(inspection_id, label):
     con.commit(); con.close()
 
 
-def inspect(fabric=None, image=None, scorer=None, detector=None):
+def inspect(fabric=None, image=None, scorer=None, detector=None, anomaly_scorer=None):
     """Everything up to the verdict. Returns the record (already logged).
     Fabrics with detector: yolo use the YOLO model; others use the anomaly heatmap."""
     fabric = fabric or FAB["fabric"]
@@ -116,12 +157,18 @@ def inspect(fabric=None, image=None, scorer=None, detector=None):
         if c.get("detector", "anomaly") == "yolo":
             dets = (detector or get_detector(fabric)).detect(img);   lap("detect")
             findings = fp.findings_from_detections(dets, img.shape, c["px_per_mm"], rules)
+            if not findings and (c.get("anomaly") or {}).get("enabled"):       # second opinion, only when clean
+                op = anomaly_second_opinion(img, fabric, c["px_per_mm"], rules, anomaly_scorer);   lap("anomaly")
+                if op is not None:
+                    rec["anomaly"] = {k: op[k] for k in ("flagged", "fraction", "max")}
+                    findings = op["findings"]
         else:
             hm = (scorer or get_scorer(fabric)).heatmap(img);   lap("heatmap")
             findings = fp.findings_from_heatmap(hm, c["threshold"], c["px_per_mm"], rules)
         rec["uncalibrated"] = not c.get("calibrated", True)
         rec["findings"] = findings
-        rec["verdict"] = fp.verdict_from_findings(findings, rules);  lap("rules")
+        rec["verdict"] = ("REVIEW" if rec.get("anomaly", {}).get("flagged")          # anomaly-only: never above REVIEW
+                          else fp.verdict_from_findings(findings, rules));  lap("rules")
         rec["image"] = _draw(img, findings, c["px_per_mm"]);    lap("draw")
     else:
         rec["verdict"], rec["invalid_reasons"] = INVALID, reasons

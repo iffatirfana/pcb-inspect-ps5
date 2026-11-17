@@ -68,7 +68,7 @@ PAGE = """<!doctype html><html><head><meta charset="utf-8">
   <div class="card"><h3>Findings</h3>
    {% if r.findings %}<table><tr><th>Type</th><th>Severity</th><th>Area</th><th>Zone</th><th>Conf.</th></tr>
    {% for f in r.findings %}<tr><td>{{ f.type }}</td><td class="{{ f.severity }}">{{ f.severity }}</td>
-    <td>{{ f.area_mm2 }} mm&sup2;</td><td>{{ f.zone }}</td><td>{{ f.confidence }}</td></tr>{% endfor %}</table>
+    <td>{{ f.area_mm2 }} mm&sup2;</td><td>{{ f.zone }}</td><td>{{ f.confidence if f.confidence is not none else '-' }}</td></tr>{% endfor %}</table>
    {% else %}<p class="mut">No defects found.</p>{% endif %}</div>
  </div>
  <div>
@@ -164,6 +164,9 @@ def do_inspect():
         STATE["action"] = (None if rec["verdict"] == fpipe.INVALID else
                            fa.structured_action(rec["findings"], rec["verdict"], STATE["guidance"],
                                                 rec.get("uncalibrated", False)))
+        if rec.get("anomaly", {}).get("flagged") and STATE["action"]:
+            STATE["action"]["notes"].insert(0, "Flagged by the second-opinion model only (detector found no defect): "
+                                               "confirm by eye.")
         STATE["rec"] = rec
     except Exception as e:               # show the problem on the page instead of a 500
         STATE["error"] = str(e)
