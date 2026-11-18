@@ -4,9 +4,9 @@ fabric: blue                  # default fabric key below
 fabrics:
   blue:
     detector: yolo            # yolo = YOLOv8-seg (Hole/Knot/Line/Stain); anomaly = heatmap detector
-    yolo_model: models/best_169.onnx   # or best_a2.pt; same weights
+    yolo_model: models/best_a2.onnx    # 960x960 export (Ultralytics 8.4.215); previous model: best_169.onnx (640x384)
     yolo_conf: 0.5            # measured on our blue photos: 0 of 71 normals flagged at 0.5
-    yolo_imgsz: 640
+    yolo_imgsz: 960
     px_per_mm: 6.0            # measured from ruler photo (1265x1600 px, 60.1 px per cm); valid only at this camera distance and image size
     calibrated: true          # ruler photo 2026-11-18; redo if camera distance or resolution changes
     crop: null
