@@ -5,25 +5,30 @@ Entry: textile and fabric quality control on a Raspberry Pi 5 (CPU only), with L
 
 ## What it does
 
-One photo goes in; a verdict, a repair route and two short operator actions come out, with no cloud connection.
+One photo goes in; a verdict, a repair route and a short three-line operator note come out, with no cloud connection.
 
 ```
-photo / webcam -> YOLOv8n-seg detector (onnxruntime) -> rule engine (severity, verdict)
+photo / webcam -> YOLOv8-seg detector (onnxruntime) -> rule engine (severity, verdict, cloth quality score)
               -> [only if nothing found] anomaly second opinion (ResNet18 + normal-patch bank)
-              -> Llama 3.2 1B on ExecuTorch (2 operator actions) -> dashboard + SQLite log
+              -> Llama 3.2 1B on ExecuTorch (Risk / Check / Action note) -> dashboard + SQLite log
 ```
 
-- **Detector:** finds Hole, Knot, Line and Stain defects, with polygon and area.
-- **Anomaly second opinion:** when the detector finds nothing, a second model compares the photo with a memory bank of normal-denim patches (ResNet18 layer2+layer3 features, nearest-neighbour distance, PatchCore-style). If more than 1.5% of the photo looks abnormal, the verdict becomes **REVIEW** with up to three regions marked "Anomaly". It can only raise PASS to REVIEW; it never causes REWORK or REJECT, and it does not run when the detector already found a defect.
+- **Detector:** finds Hole, Knot, Line and Stain defects, with polygon and area. The default model is `best_a2.onnx` (960x960 input, set in `kb/fabric.yaml`); the earlier `best_169.onnx` (640x384, faster) is kept as a fallback.
+- **Anomaly second opinion:** when the detector finds nothing, a second model compares the photo with a memory bank of normal-denim patches (ResNet18 layer2+layer3 features, nearest-neighbour distance, PatchCore-style). If more than 1.5% of the photo looks abnormal, the verdict becomes **REVIEW** with up to three regions marked "Anomaly". It can only raise PASS to REVIEW; it never causes REWORK or REJECT, and it does not run when the detector already found a defect. The dashboard shows an **anomaly heatmap** card (per-pixel score, flag threshold outlined) for these photos.
 - **Rule engine:** Low / Medium / High severity from area, then PASS / REVIEW / REWORK / REJECT. Only rules decide the verdict.
+- **Cloth quality score:** a 0-100 score and A-D grade for each piece, computed from the findings by rules (`fabric_quality.py`); the verdict sets a ceiling, so a REJECT is always grade D.
 - **Rule-generated recommendations:** disposition, urgency, repair route, what to check and likely cause per defect (`kb/fabric_guidance.yaml`).
-- **Llama advisor:** words two numbered operator actions from the verdict, findings and SOP line. Its reply is validated (it must not say release/ship/approve for a non-PASS verdict); on any failure a template built from the SOP is used. Skipped on PASS.
-- **Dashboard:** local web page with a colour verdict banner, annotated photo, findings table, recommendations, timings, operator feedback and history.
-- **Log:** every inspection is stored in SQLite (`fabric_inspections`).
+- **Llama advisor:** writes three lines (Risk, Check, Action) from the verdict, findings and SOP line, using a ~300-token chat-template prompt with one worked example. Its reply is validated: it must not say release/ship/approve for a non-PASS verdict, and every number must come from the facts it was given. On any failure, after one retry, a template built from the SOP is used. Skipped on PASS.
+- **Dashboard:** local web page with a summary strip (inspected today, passed, review/rework, rejected, pass rate), a colour verdict banner with the cloth quality score, annotated photo, findings table, recommendations, the Llama note, the anomaly heatmap when the second opinion fires, timings, device use time (this session and total hours), operator feedback and history.
+- **Operator feedback:** the operator can give a corrected verdict, a reason and a note for each inspection, and export all inspections with this feedback as CSV (`/export.csv`).
+- **Log:** every inspection, its quality score and the operator feedback are stored in SQLite (`fabric_inspections`); device use time is stored in `device_usage`.
+- **Llama switch:** `llm.enabled` in `config.yaml` turns the Llama note on or off; with it off the dashboard shows rule-based recommendations only.
 
 Vision runs on the Pi CPU (onnxruntime). Llama runs on the Arm CPU through ExecuTorch. No Hailo accelerator is used.
 
 ## Measured results (Raspberry Pi 5, 16 GB, our own photos of blue denim)
+
+These numbers were measured with the `best_169.onnx` detector. They have not yet been re-measured with `best_a2.onnx`, which is slower (960x960 input).
 
 | Measurement | Value |
 | --- | --- |
@@ -46,22 +51,23 @@ The memory bank was built from the 51 train photos only. The pixel threshold was
 | Holes (15) | detector alone 12 REJECT; with second opinion 15 of 15 flagged (3 as REVIEW) |
 | Threads (6) | detector alone 2 REJECT; with second opinion 6 of 6 flagged (4 as REVIEW) |
 
-These are small sets from one fabric and one camera setup, so they show the idea works but are not an accuracy claim. Pi timing for the anomaly step has not been measured yet.
+These are small sets from one fabric and one camera setup, so they show the idea works but are not an accuracy claim. On the Pi the anomaly step took about 0.76 s on a clean photo (full clean-photo run 1.11 s). Full pipeline, fresh process: hole photo REJECT with model-written advice in 5.09 s including model load; two consecutive requests to the persistent runner ran without reload.
 
 ## Limitations (read these)
 
 - The anomaly second opinion is trained on normal blue denim only and flags about 2 in 10 held-out normal photos for a quick manual check. It is advisory: it can raise PASS to REVIEW and nothing more.
-- Trained on blue denim only. A yellow patterned cloth gave false Holes; other fabrics need new data.
-- The pixel-to-mm scale in `kb/fabric.yaml` is a placeholder until calibrated from a ruler photo (`calibrated: false`), so sizes and severities are estimates. The dashboard warns about this.
-- The Llama file is named `..._512.pte`, but measured on the Pi the effective context is **128 tokens** (prompt plus reply stop at about 127; prompts of 162 tokens fail). The advice prompt is therefore about 80 tokens and the model writes only two short actions.
-- Experiments that did not help (tiling, a larger 960x960 detector) are described in the technical report.
+- Trained on blue denim only. A yellow patterned cloth gave false Holes, and on grey cloth and in shadows the anomaly second opinion flags regions (REVIEW only); other fabrics need new data or a bank built from clean photos of that fabric.
+- The pixel-to-mm scale in `kb/fabric.yaml` (`px_per_mm`) comes from a ruler photo and is valid only for that camera, height and image size; redo it if the setup changes. If `calibrated` is false the dashboard warns that sizes and severities are estimates. Anomaly regions that cover a large share of the frame are shown as "wide area" without a size, because they reflect lighting or fabric change, not a measurable defect.
+- The older `..._512.pte` file measured only about 127 tokens of usable context on the Pi. The rebuilt `llama3_2_1b_q8da4w_ctx512.pte` was tested on the Pi with prompts of 7, 213 and 469 tokens (469 + 42 generated = 511). `config.yaml` caps prompt plus reply at 480 tokens; the advice prompt is about 300 tokens.
+- Experiments that did not help (tiling) are described in the technical report.
 
 ## Repository layout (fabric entry)
 
 | Path | Purpose |
 | --- | --- |
 | `fabric_yolo.py` | onnxruntime-only YOLOv8-seg detector (letterbox, NMS, mask polygons) |
-| `fabric_scorer.py` | ResNet18 feature extractor plus normal-patch bank, giving an anomaly heatmap |
+| `fabric_scorer.py` | ResNet18 feature extractor plus normal-patch bank, giving the anomaly heatmap (also drawn on the dashboard) |
+| `fabric_quality.py` | cloth quality score (0-100) and A-D grade from the findings |
 | `fabric_profile.py` | detections to findings in mm, severity, verdict, Llama payload |
 | `fabric_actions.py`, `kb/fabric_guidance.yaml` | rule-generated recommendation fields |
 | `fabric_advisor.py` | prompt, validation, retry and template fallback for Llama |
@@ -79,11 +85,11 @@ The repository also contains an earlier PCB inspection profile (`pipeline.py`, `
 ```bash
 python -m venv .venv
 .venv/bin/pip install numpy opencv-python-headless pyyaml pydantic onnxruntime flask psutil pytest   # Windows: .venv\Scripts\pip
-.venv/bin/python -m pytest tests/test_fabric_profile.py tests/test_fabric_actions.py tests/test_fabric_app.py tests/test_fabric_pipeline.py -q
+.venv/bin/python -m pytest tests/test_fabric_quality.py tests/test_fabric_scorer.py tests/test_fabric_app.py tests/test_fabric_pipeline.py test_fabric_profile.py -q
 .venv/bin/python fabric_pipeline.py blue path/to/photo.jpg
 .venv/bin/python -m ui.fabric_app      # http://127.0.0.1:5000
 ```
-This needs `models/best_169.onnx` (see Models below).
+This needs the detector set in `kb/fabric.yaml` (`models/best_a2.onnx`; see Models below).
 
 ## Run on the Raspberry Pi 5
 
@@ -95,14 +101,15 @@ This needs `models/best_169.onnx` (see Models below).
 
 ## Models
 
-Model files are not stored in Git except the detector and the two anomaly files (force-added because `.gitignore` excludes `*.onnx`).
+Model files are not stored in Git except the detector files and the two anomaly files (force-added because `.gitignore` excludes `*.onnx`).
 
 | File | What | Source |
 | --- | --- | --- |
-| `models/best_169.onnx` (13.7 MB) | YOLOv8n-seg detector, 640x384 input | trained by the team on the public denim dataset below |
+| `models/best_a2.onnx` (13.4 MB) | YOLOv8-seg detector, 960x960 input (default) | trained by the team on the public denim dataset below |
+| `models/best_169.onnx` (13.7 MB) | YOLOv8n-seg detector, 640x384 input (faster fallback) | trained by the team on the same dataset |
 | `models/anomaly/resnet18_fused.onnx` (11 MB) | ResNet18 layer2+layer3 feature extractor, 512x512 input | ResNet18 ImageNet weights exported to ONNX by the team |
 | `models/anomaly/bank_blue_trainonly.npy` (7.7 MB) | 5000 normal-denim patch features (384 values each) | built from the 51 training photos |
-| `models/llama3_2_1b_q8da4w_512.pte` (802 MB) | Llama 3.2 1B Instruct, ExecuTorch, 8da4w, XNNPACK | exported by the team with ExecuTorch 1.5.1 |
+| `models/llama3_2_1b_q8da4w_ctx512.pte` (766 MB) | Llama 3.2 1B Instruct, ExecuTorch, 8da4w, XNNPACK | exported by the team with ExecuTorch 1.5.1 |
 | `models/tokenizer.model` (2.2 MB) | Llama 3 tokenizer | from Llama 3.2 |
 
 The Llama files are fetched with `llm.executorch_backend.download_models()` from the team's Hugging Face repository.

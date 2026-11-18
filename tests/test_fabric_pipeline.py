@@ -280,3 +280,14 @@ def test_llm_off_in_config_gives_no_advice_and_keeps_verdict(monkeypatch):
     fpl.advise(rec, advisor=None)
     assert rec["advice"]["source"] == "off" and rec["advice"]["actions"] == []
     assert rec["verdict"] == "PASS"
+
+
+def test_huge_anomaly_region_has_no_mm2_size(monkeypatch):
+    import numpy as np
+    monkeypatch.setitem(fpl.FAB["fabrics"]["blue"]["anomaly"], "enabled", True)
+    class Big:
+        def heatmap(self, img):
+            return np.full(img.shape[:2], 9.0, np.float32)      # whole frame abnormal
+    rec = fpl.inspect("blue", good_img(), detector=FakeDetector([]), anomaly_scorer=Big())
+    an = [f for f in rec["findings"] if f["type"] == "Anomaly"]
+    assert rec["verdict"] == "REVIEW" and an and all(f.get("wide") and f["area_mm2"] == 0.0 for f in an)

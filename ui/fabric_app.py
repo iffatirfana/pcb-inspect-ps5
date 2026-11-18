@@ -98,7 +98,7 @@ PAGE = """<!doctype html><html><head><meta charset="utf-8">
   <div class="card"><h3>Findings</h3>
    {% if r.findings %}<table><tr><th>Type</th><th>Severity</th><th>Area</th><th>Zone</th><th>Conf.</th></tr>
    {% for f in r.findings %}<tr><td>{{ f.type }}</td><td class="{{ f.severity }}">{{ f.severity }}</td>
-    <td>{{ f.area_mm2 }} mm&sup2;</td><td>{{ f.zone }}</td><td>{{ f.confidence if f.confidence is not none else '-' }}</td></tr>{% endfor %}</table>
+    <td>{% if f.wide %}wide area{% else %}{{ f.area_mm2 }} mm&sup2;{% endif %}</td><td>{{ f.zone }}</td><td>{{ f.confidence if f.confidence is not none else '-' }}</td></tr>{% endfor %}</table>
    {% else %}<p class="mut">No defects found.</p>{% endif %}</div>
  </div>
  <div>

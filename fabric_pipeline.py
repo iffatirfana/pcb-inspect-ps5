@@ -86,8 +86,12 @@ def anomaly_second_opinion(img, fabric, px_per_mm, rules, scorer=None):
             fnd = [{"area_mm2": 0.0, "width_mm": 0.0, "height_mm": 0.0, "aspect": 1.0,
                     "x_mm": round(x / px_per_mm, 1), "y_mm": round(y / px_per_mm, 1),
                     "zone": fp.zone_3x3(x, y, hm.shape[1], hm.shape[0]), "peak_score": out["max"]}]
+        frame_mm2 = hm.shape[0] * hm.shape[1] / (px_per_mm ** 2)
         for f in fnd:
             f.update(type="Anomaly", severity="Low", confidence=None)
+            if f.get("area_mm2", 0.0) > 0.25 * frame_mm2:   # a region this big is lighting or fabric change, not a size
+                f["wide"] = True
+                f["area_mm2"] = 0.0
         out["findings"] = fnd
     return out
 
@@ -227,7 +231,7 @@ def _draw(img, findings, ppm, path="results/last_fabric.png"):
         cx, cy = int(f["x_mm"] * ppm), int(f["y_mm"] * ppm)
         hw, hh = int(f["width_mm"] * ppm / 2) + 6, int(f["height_mm"] * ppm / 2) + 6
         cv2.rectangle(out, (cx - hw, cy - hh), (cx + hw, cy + hh), _COL[f["severity"]], 2)
-        cv2.putText(out, f"{f.get('type', '')} {f['severity']} {f['area_mm2']}mm2".strip(), (cx - hw, max(14, cy - hh - 6)),
+        cv2.putText(out, f"{f.get('type', '')} {f['severity']} {'wide' if f.get('wide') else str(f['area_mm2']) + 'mm2'}".strip(), (cx - hw, max(14, cy - hh - 6)),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, _COL[f["severity"]], 1, cv2.LINE_AA)
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     cv2.imwrite(path, out)

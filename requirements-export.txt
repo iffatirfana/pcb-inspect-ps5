@@ -1,0 +1,2 @@
+# Only for exporting Llama .pte files on a laptop; not needed on the Raspberry Pi.
+executorch==1.5.1

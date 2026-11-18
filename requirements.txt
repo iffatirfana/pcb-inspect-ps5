@@ -8,5 +8,5 @@ huggingface_hub>=0.24
 psutil>=5.9
 flask>=3.0
 
-# LLM runtime (ExecuTorch Python runtime; match the version used for export)
-executorch==1.5.1
+# The Llama runner on the Pi is the compiled C++ llama_main (see README). The Python executorch
+# package is only needed on a laptop that exports .pte files: pip install -r requirements-export.txt

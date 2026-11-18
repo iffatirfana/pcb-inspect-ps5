@@ -64,7 +64,7 @@ def build_user_message(findings, verdict, fabric, guidance, sop_line):
         lines.append(
             f"Defect: {f.get('type', 'defect')}. "
             f"Severity: {f['severity']}. "
-            f"Area: {f['area_mm2']:.2f} mm2. "
+            f"Area: {'wide region' if f.get('wide') else format(f['area_mm2'], '.2f') + ' mm2'}. "
             f"Location: {f['zone']}. "
             f"Possible cause: {g.get('likely_cause', 'unknown')}. "
             f"Guidance: {route}."
