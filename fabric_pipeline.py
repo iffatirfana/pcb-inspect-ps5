@@ -18,6 +18,7 @@ import numpy as np
 import yaml
 
 import fabric_profile as fp
+from fabric_quality import cloth_quality
 from fabric_advisor import FabricAdvisor, FabricMockBackend, build_user_message
 from vision.quality import check_capture
 
@@ -118,23 +119,54 @@ def _db():
     con.execute("""CREATE TABLE IF NOT EXISTS fabric_inspections(
         ts TEXT, fabric TEXT, verdict TEXT, findings TEXT, advice TEXT, timings TEXT,
         operator_label TEXT)""")
+    for col in ("reason", "note", "corrected", "quality"):      # added later: safe on old databases
+        try:
+            con.execute("ALTER TABLE fabric_inspections ADD COLUMN %s TEXT" % col)
+        except sqlite3.OperationalError:
+            pass
+    con.execute("CREATE TABLE IF NOT EXISTS device_usage(session_start TEXT, seconds REAL)")
     return con
 
 
 def log(rec):
     con = _db()
-    cur = con.execute("INSERT INTO fabric_inspections VALUES (?,?,?,?,?,?,NULL)",
+    cur = con.execute("INSERT INTO fabric_inspections(ts,fabric,verdict,findings,advice,timings,quality) "
+                      "VALUES (?,?,?,?,?,?,?)",
                       (rec["ts"], rec["fabric"], rec["verdict"], json.dumps(rec["findings"]),
-                       json.dumps(rec.get("advice")), json.dumps(rec["timings"])))
+                       json.dumps(rec.get("advice")), json.dumps(rec["timings"]),
+                       (rec.get("cloth_quality") or {}).get("score")))
     con.commit(); rid = cur.lastrowid; con.close()
     return rid
 
 
-def operator_label(inspection_id, label):
-    """label: correct | wrong | missed (operator tick/cross)."""
+def operator_label(inspection_id, label, reason=None, note=None, corrected=None):
+    """label: correct | wrong | missed. reason, note and corrected verdict are optional operator detail."""
     con = _db()
-    con.execute("UPDATE fabric_inspections SET operator_label=? WHERE rowid=?", (label, inspection_id))
+    con.execute("UPDATE fabric_inspections SET operator_label=?, reason=?, note=?, corrected=? WHERE rowid=?",
+                (label, reason or None, (note or "")[:300] or None, corrected or None, inspection_id))
     con.commit(); con.close()
+
+
+def usage_start():
+    """Call once when the dashboard starts. Returns the session id used by usage_tick."""
+    con = _db()
+    cur = con.execute("INSERT INTO device_usage VALUES (?, 0)", (datetime.now().isoformat(timespec="seconds"),))
+    con.commit(); sid = cur.lastrowid; con.close()
+    return sid
+
+
+def usage_tick(session_id, seconds):
+    con = _db()
+    con.execute("UPDATE device_usage SET seconds=? WHERE rowid=?", (float(seconds), session_id))
+    con.commit(); con.close()
+
+
+def usage_total_seconds():
+    """Device use time summed over every dashboard session ever run on this device."""
+    con = _db()
+    total = con.execute("SELECT COALESCE(SUM(seconds), 0) FROM device_usage").fetchone()[0]
+    con.close()
+    return float(total)
 
 
 def inspect(fabric=None, image=None, scorer=None, detector=None, anomaly_scorer=None):
@@ -177,6 +209,7 @@ def inspect(fabric=None, image=None, scorer=None, detector=None, anomaly_scorer=
         if hm_overlay and hm_overlay[0] is not None:       # picture of what the second opinion saw
             rec["heatmap_image"] = _draw_heatmap(img, *hm_overlay)
         lap("draw")
+        rec["cloth_quality"] = cloth_quality(findings, rec["verdict"], rec.get("anomaly"))
     else:
         rec["verdict"], rec["invalid_reasons"] = INVALID, reasons
     timings["to_verdict"] = round(sum(timings.values()), 2)

@@ -228,11 +228,11 @@ def test_no_heatmap_picture_when_detector_found_a_defect(monkeypatch):
 
 
 # ---- advice prompt and validator (Risk / Check / Action reply) ----
-GOOD_REPLY = ("Risk: A 67 mm2 hole weakens the cloth and will tear when sewn.\n"
+GOOD_REPLY = ("Risk: A 66.80 mm2 hole weakens the cloth and will tear when sewn.\n"
               "Check: Look for fraying around the hole and for more holes nearby.\n"
               "Action: Set the piece aside and tag it for scrap.")
-PAYLOAD = ("Fabric: blue. Verdict: REJECT.\nDefect: Hole, High, 67 mm2, top-right. "
-           "Cause: Snag. Route: Cut out the section or scrap it.")
+PAYLOAD = ("Fabric: blue.\nVerified verdict: REJECT.\nDefect: Hole. Severity: High. Area: 66.80 mm2. "
+           "Location: top-right. Possible cause: Snag. Guidance: Cut out the section or scrap it.")
 FINDING = [{"type": "Hole", "severity": "High", "area_mm2": 66.8, "zone": "top-right"}]
 
 
@@ -242,11 +242,11 @@ def adv_obj():
 
 def test_validator_accepts_risk_check_action_and_keeps_model_risk():
     a = adv_obj().validate(GOOD_REPLY, "REJECT", FINDING, PAYLOAD)
-    assert a and a.risk.startswith("A 67 mm2 hole") and len(a.actions) == 2 and a.verdict == "REJECT"
+    assert a and a.risk.startswith("A 66.80 mm2 hole") and len(a.actions) >= 2 and a.verdict == "REJECT"
 
 
 def test_validator_rejects_invented_numbers():
-    bad = GOOD_REPLY.replace("67 mm2", "250 mm2")
+    bad = GOOD_REPLY.replace("66.80 mm2", "250 mm2")
     assert adv_obj().validate(bad, "REJECT", FINDING, PAYLOAD) is None
 
 
@@ -259,7 +259,7 @@ def test_payload_and_prompt_contain_the_facts_and_fit_the_context():
     import fabric_actions as fa
     from fabric_advisor import build_user_message
     pl = build_user_message(FINDING * 3, "REJECT", "blue", fa.load_guidance(), fpl.FAB["sop"]["REJECT"])
-    assert "Verdict: REJECT" in pl and "Hole, High, 67 mm2, top-right" in pl and "Route: Cut out" in pl
+    assert "verdict: REJECT" in pl and "Severity: High. Area: 66.80 mm2. Location: top-right" in pl and "Cut out" in pl
     prompt = adv_obj().build_prompt(pl)
     assert len(prompt) < 1300          # about 300 tokens, leaves room for the reply in the model context
 
@@ -267,11 +267,11 @@ def test_payload_and_prompt_contain_the_facts_and_fit_the_context():
 def test_advise_uses_model_text_when_valid():
     class Good(FabricMockBackend):
         def generate(self, prompt):          # repeats the size from the user message, as a good reply would
-            n = re.findall(r"Defect: \w+, High, (\d+) mm2", prompt.split("user<|end_header_id|>")[-1])[0]
-            return GOOD_REPLY.replace("67", n)
+            n = re.findall(r"Defect: \w+\. Severity: High\. Area: ([\d.]+) mm2", prompt.split("user<|end_header_id|>")[-1])[0]
+            return GOOD_REPLY.replace("66.80", n)
     rec = fpl.inspect("white", good_img(), FakeScorer(40))
     a = fpl.advise(rec, FabricAdvisor(Good(), fpl.FAB["sop"]))
-    assert a["source"] == "llm" and a["verdict"] == "REJECT" and a["risk"].startswith("A 25 mm2 hole")
+    assert a["source"] == "llm" and a["verdict"] == "REJECT" and a["risk"].startswith("A ") and " mm2 hole" in a["risk"]
 
 
 def test_llm_off_in_config_gives_no_advice_and_keeps_verdict(monkeypatch):

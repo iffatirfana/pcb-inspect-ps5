@@ -75,3 +75,24 @@ def test_anomaly_only_flag_shows_review_and_note(client, monkeypatch):
     assert "Anomaly heatmap" in html
     img = client.get("/heatmap")
     assert img.status_code == 200 and img.mimetype == "image/png"
+
+
+def test_dashboard_shows_summary_and_device_time(client):
+    html = client.get("/").get_data(as_text=True)
+    assert "Total device use" in html and "Inspected today" in html
+
+
+def test_quality_shown_and_feedback_detail_exported(client, monkeypatch):
+    big = {"type": "Hole", "confidence": 0.88, "box": (900, 500, 1100, 700), "polygon": None}
+    html = post(client, monkeypatch, [big]).get_data(as_text=True)
+    assert "Cloth quality" in html and "Grade D" in html
+    client.post("/label", data={"kind": "wrong", "corrected": "REWORK", "reason": "Wrong severity",
+                                "note": "small hole"}, follow_redirects=True)
+    csv_text = client.get("/export.csv").get_data(as_text=True)
+    assert "REWORK" in csv_text and "Wrong severity" in csv_text and "small hole" in csv_text
+
+
+def test_device_usage_accumulates(client):
+    sid = fpipe.usage_start()
+    fpipe.usage_tick(sid, 3600)
+    assert fpipe.usage_total_seconds() >= 3600

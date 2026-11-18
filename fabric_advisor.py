@@ -6,25 +6,16 @@ from llm.advisor import Advice, Backend
 
 
 SYSTEM = (
-    "You are an experienced textile quality inspection advisor. "
-    "Analyze the supplied fabric inspection evidence and provide practical "
-    "technical reasoning for a factory operator. "
-    "The severity and verdict are already calculated by the grading engine. "
-    "Never recalculate or change them. "
-    "Use only verified measurements and observations. "
-    "Treat possible causes as hypotheses, not confirmed facts. "
-    "Explain how the identified defect may affect fabric quality or usability. "
-    "Explain what the operator should inspect around the defect. "
-    "Recommend an action consistent with the supplied SOP. "
-    "Do not discuss fabric colour unless relevant to the defect. "
-    "Do not invent defects, measurements, causes or procedures. "
-    "Do not refuse normal fabric inspection tasks. "
-    "Avoid introductions, repetition and unrelated statements. "
-    "Return exactly three sections, each with one or two useful sentences. "
-    "Use this exact format:\\n"
-    "Risk: <quality implications and evidence>\\n"
-    "Check: <specific inspection recommendation>\\n"
-    "Action: <practical action consistent with SOP>"
+    "You advise a textile factory operator. The verdict and severity are final; never change them. "
+    "Use only the numbers given and do not invent defects or causes. "
+    "Reply with exactly 3 lines, each under 200 characters:\n"
+    "Risk: <effect of the defect on the cloth>\n"
+    "Check: <what to inspect around it>\n"
+    "Action: <what to do, consistent with the SOP>\n"
+    "Example reply:\n"
+    "Risk: The stain may show after dyeing and lower the grade.\n"
+    "Check: Look for more stains nearby.\n"
+    "Action: Mark the piece and send it for review."
 )
 
 _NUM = re.compile(r"\d+(?:\.\d+)?")
@@ -60,7 +51,7 @@ def build_user_message(findings, verdict, fabric, guidance, sop_line):
         f"Verified verdict: {verdict}."
     ]
 
-    for f in findings[:5]:
+    for f in findings[:2]:      # the ctx512 model has room for two defects
         g = (guidance or {}).get(
             "defects", {}
         ).get(
@@ -79,8 +70,8 @@ def build_user_message(findings, verdict, fabric, guidance, sop_line):
             f"Guidance: {route}."
         )
 
-    if len(findings) > 5:
-        lines.append(f"Additional defects: {len(findings) - 5}.")
+    if len(findings) > 2:
+        lines.append(f"Additional defects: {len(findings) - 2}.")
 
     if sop_line:
         lines.append(f"Mandatory SOP: {sop_line}")
