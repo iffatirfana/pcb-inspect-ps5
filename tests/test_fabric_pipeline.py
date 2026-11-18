@@ -1,3 +1,5 @@
+import re
+
 import numpy as np
 import pytest
 
@@ -114,7 +116,7 @@ def test_yolo_route_hole_is_rejected_when_large_and_named():
     rec = fpl.inspect("blue", good_img(), detector=FakeDetector([det("Hole", 0.8, 100, 100, 140, 140)]))
     assert rec["verdict"] == "REJECT"
     assert rec["findings"][0]["type"] == "Hole" and rec["findings"][0]["confidence"] == 0.8
-    assert rec["uncalibrated"] is True
+    assert rec["uncalibrated"] is False
     assert "detect" in rec["timings"]
     a = fpl.advise(rec, adv())
     assert a["verdict"] == "REJECT"
@@ -205,3 +207,67 @@ def test_anomaly_finding_works_with_dashboard_actions(monkeypatch):
     rec = fpl.inspect("blue", good_img(), detector=FakeDetector([]), anomaly_scorer=FakeScorer(200, 300, 200))
     act = fa.structured_action(rec["findings"], rec["verdict"], fa.load_guidance())
     assert act["items"][0]["type"] == "Anomaly" and "Operator decides" in act["items"][0]["route"]
+
+
+def test_heatmap_picture_written_when_anomaly_runs(monkeypatch, tmp_path):
+    import os, cv2
+    anomaly_on(monkeypatch)
+    for scorer in (FakeScorer(200, 300, 200), FakeScorer(0)):          # flagged and quiet
+        rec = fpl.inspect("blue", good_img(), detector=FakeDetector([]), anomaly_scorer=scorer)
+        assert os.path.exists(rec["heatmap_image"])
+        assert cv2.imread(rec["heatmap_image"]).shape == good_img().shape
+        assert rec["anomaly"]["limit"] == fpl.FAB["fabrics"]["blue"]["anomaly"]["image_fraction"]
+
+
+def test_no_heatmap_picture_when_detector_found_a_defect(monkeypatch):
+    anomaly_on(monkeypatch)
+    rec = fpl.inspect("blue", good_img(), detector=FakeDetector([det("Hole", 0.8, 100, 100, 140, 140)]),
+                      anomaly_scorer=FakeScorer(0))
+    assert rec["verdict"] == "REJECT" and "heatmap_image" not in rec
+
+
+# ---- advice prompt and validator (Risk / Check / Action reply) ----
+GOOD_REPLY = ("Risk: A 67 mm2 hole weakens the cloth and will tear when sewn.\n"
+              "Check: Look for fraying around the hole and for more holes nearby.\n"
+              "Action: Set the piece aside and tag it for scrap.")
+PAYLOAD = ("Fabric: blue. Verdict: REJECT.\nDefect: Hole, High, 67 mm2, top-right. "
+           "Cause: Snag. Route: Cut out the section or scrap it.")
+FINDING = [{"type": "Hole", "severity": "High", "area_mm2": 66.8, "zone": "top-right"}]
+
+
+def adv_obj():
+    return FabricAdvisor(FabricMockBackend(), fpl.FAB["sop"])
+
+
+def test_validator_accepts_risk_check_action_and_keeps_model_risk():
+    a = adv_obj().validate(GOOD_REPLY, "REJECT", FINDING, PAYLOAD)
+    assert a and a.risk.startswith("A 67 mm2 hole") and len(a.actions) == 2 and a.verdict == "REJECT"
+
+
+def test_validator_rejects_invented_numbers():
+    bad = GOOD_REPLY.replace("67 mm2", "250 mm2")
+    assert adv_obj().validate(bad, "REJECT", FINDING, PAYLOAD) is None
+
+
+def test_validator_rejects_release_on_a_reject():
+    bad = "Risk: Small problem.\nCheck: Look at the hole.\nAction: Release the piece to the customer."
+    assert adv_obj().validate(bad, "REJECT", FINDING, PAYLOAD) is None
+
+
+def test_payload_and_prompt_contain_the_facts_and_fit_the_context():
+    import fabric_actions as fa
+    from fabric_advisor import build_user_message
+    pl = build_user_message(FINDING * 3, "REJECT", "blue", fa.load_guidance(), fpl.FAB["sop"]["REJECT"])
+    assert "Verdict: REJECT" in pl and "Hole, High, 67 mm2, top-right" in pl and "Route: Cut out" in pl
+    prompt = adv_obj().build_prompt(pl)
+    assert len(prompt) < 1300          # about 300 tokens, leaves room for the reply in the model context
+
+
+def test_advise_uses_model_text_when_valid():
+    class Good(FabricMockBackend):
+        def generate(self, prompt):          # repeats the size from the user message, as a good reply would
+            n = re.findall(r"Defect: \w+, High, (\d+) mm2", prompt.split("user<|end_header_id|>")[-1])[0]
+            return GOOD_REPLY.replace("67", n)
+    rec = fpl.inspect("white", good_img(), FakeScorer(40))
+    a = fpl.advise(rec, FabricAdvisor(Good(), fpl.FAB["sop"]))
+    assert a["source"] == "llm" and a["verdict"] == "REJECT" and a["risk"].startswith("A 25 mm2 hole")

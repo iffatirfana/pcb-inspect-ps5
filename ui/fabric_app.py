@@ -65,6 +65,10 @@ PAGE = """<!doctype html><html><head><meta charset="utf-8">
  <div>
   <div class="card">{% if r.image %}<img src="{{ url_for('image') }}?id={{ r.id }}" alt="Inspected fabric">
    {% else %}<p>No image: {{ r.invalid_reasons|join('; ') }}</p>{% endif %}</div>
+  {% if r.heatmap_image %}<div class="card"><h3>Anomaly heatmap <span class="tag">second opinion</span></h3>
+   <img src="{{ url_for('heatmap') }}?id={{ r.id }}" alt="Anomaly heatmap">
+   <p class="mut">Yellow and red areas look unusual compared with normal fabric (outlined in white). The second opinion flags
+    the photo when more than {{ (r.anomaly.limit * 100)|round(1) }}% of it is unusual; this photo: {{ (r.anomaly.fraction * 100)|round(1) }}%.</p></div>{% endif %}
   <div class="card"><h3>Findings</h3>
    {% if r.findings %}<table><tr><th>Type</th><th>Severity</th><th>Area</th><th>Zone</th><th>Conf.</th></tr>
    {% for f in r.findings %}<tr><td>{{ f.type }}</td><td class="{{ f.severity }}">{{ f.severity }}</td>
@@ -82,6 +86,7 @@ PAGE = """<!doctype html><html><head><meta charset="utf-8">
    {% elif a %}<p class="mut">Nothing to route.</p>{% endif %}</div>
   <div class="card"><h3>Operator actions <span class="tag">{{ r.advice.source if r.advice else '-' }}</span></h3>
    {% if r.advice %}<ol>{% for x in r.advice.actions %}<li>{{ x }}</li>{% endfor %}</ol>
+   {% if r.advice.source.startswith('llm') and r.advice.risk %}<p><b>Risk:</b> {{ r.advice.risk }}</p>{% endif %}
    <p class="mut">{{ r.advice.summary }}</p>{% endif %}
    <p class="mut">Detect {{ r.timings.get('detect','-') }} ms &middot; to verdict {{ r.timings.to_verdict }} ms
     &middot; advice {{ r.timings.get('llm','-') }} ms &middot; total {{ r.timings.get('total','-') }} ms</p></div>
@@ -188,6 +193,16 @@ def image():
     if not rec or not rec.get("image"):
         return ("", 404)
     resp = send_file(Path(rec["image"]).resolve(), mimetype="image/png")
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.get("/heatmap")
+def heatmap():
+    rec = STATE["rec"]
+    if not rec or not rec.get("heatmap_image"):
+        return ("", 404)
+    resp = send_file(Path(rec["heatmap_image"]).resolve(), mimetype="image/png")
     resp.headers["Cache-Control"] = "no-store"
     return resp
 

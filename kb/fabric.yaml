@@ -7,8 +7,8 @@ fabrics:
     yolo_model: models/best_169.onnx   # or best_a2.pt; same weights
     yolo_conf: 0.5            # measured on our blue photos: 0 of 71 normals flagged at 0.5
     yolo_imgsz: 640
-    px_per_mm: 8.0            # PLACEHOLDER: no ruler photo yet. Sizes in mm are NOT real.
-    calibrated: false         # set true after px_per_mm_from_ruler() on a real ruler photo
+    px_per_mm: 6.0            # measured from ruler photo (1265x1600 px, 60.1 px per cm); valid only at this camera distance and image size
+    calibrated: true          # ruler photo 2026-11-18; redo if camera distance or resolution changes
     crop: null
     backbone_onnx: models/fabric_backbone.onnx   # used only when detector: anomaly
     bank: models/bank_blue.npy

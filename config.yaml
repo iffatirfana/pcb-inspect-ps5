@@ -63,9 +63,9 @@ yolo:
 
 llm:
   backend: auto        # auto (ExecuTorch if built + model present, else mock) | executorch | mock
-  pte: models/llama3_2_1b_q8da4w_512.pte
+  pte: models/llama3_2_1b_q8da4w_ctx512.pte
   tokenizer: models/tokenizer.model
   hf_repo: iffatirfana/pcb-inspect-ps5-models
   max_new_tokens: 150
   temperature: 0.0
-  context_length: 128   # measured on the Pi: prompt + reply stop at ~127 tokens
+  context_length: 480   # ctx512 .pte tested on the Pi up to a 469-token prompt; our prompt is about 300 tokens

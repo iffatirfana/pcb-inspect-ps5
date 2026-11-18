@@ -43,7 +43,7 @@ def test_hole_page(client, monkeypatch):
     html = r.get_data(as_text=True)
     assert r.status_code == 200
     assert "REJECT" in html and "Recommended action" in html and "Hole" in html
-    assert "not calibrated" in html
+    assert "not calibrated" not in html
 
 
 def test_pass_page(client, monkeypatch):
@@ -72,3 +72,6 @@ def test_anomaly_only_flag_shows_review_and_note(client, monkeypatch):
     monkeypatch.setitem(fpipe._anomaly, "blue", Hot())
     html = post(client, monkeypatch, []).get_data(as_text=True)
     assert "REVIEW" in html and "Anomaly" in html and "second-opinion" in html
+    assert "Anomaly heatmap" in html
+    img = client.get("/heatmap")
+    assert img.status_code == 200 and img.mimetype == "image/png"

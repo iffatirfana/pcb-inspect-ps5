@@ -22,7 +22,7 @@ from pathlib import Path
 from llm.advisor import Backend
 
 STOP_MARKERS = ("<|eot_id|>", "<|end_of_text|>")
-MAX_CTX = 128   # this .pte stops at 128 tokens in total (prompt + reply)
+MAX_CTX = 480   # total tokens (prompt + reply); the ctx512 .pte accepts up to 512
 READY, DONE, ERR = b"<<LLM_READY>>", b"<<LLM_DONE>>", b"<<LLM_ERROR>>"
 
 
