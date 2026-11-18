@@ -31,6 +31,7 @@ def tmp_db(tmp_path, monkeypatch):
     monkeypatch.setitem(fpl.CFG["paths"], "db", str(tmp_path / "t.sqlite"))
     # the real second-opinion model is off in these tests; the anomaly tests below use a fake scorer
     monkeypatch.setitem(fpl.FAB["fabrics"]["blue"]["anomaly"], "enabled", False)
+    monkeypatch.setitem(fpl.CFG["llm"], "enabled", True)    # advice tests need the advisor on; config.yaml may turn it off
 
 
 def adv():
@@ -271,3 +272,11 @@ def test_advise_uses_model_text_when_valid():
     rec = fpl.inspect("white", good_img(), FakeScorer(40))
     a = fpl.advise(rec, FabricAdvisor(Good(), fpl.FAB["sop"]))
     assert a["source"] == "llm" and a["verdict"] == "REJECT" and a["risk"].startswith("A 25 mm2 hole")
+
+
+def test_llm_off_in_config_gives_no_advice_and_keeps_verdict(monkeypatch):
+    monkeypatch.setitem(fpl.CFG["llm"], "enabled", False)
+    rec = fpl.inspect("blue", good_img(), detector=FakeDetector([]))
+    fpl.advise(rec, advisor=None)
+    assert rec["advice"]["source"] == "off" and rec["advice"]["actions"] == []
+    assert rec["verdict"] == "PASS"

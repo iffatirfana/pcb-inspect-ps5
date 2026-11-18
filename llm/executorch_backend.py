@@ -5,7 +5,7 @@ ExecuTorch v1.5.1 source, XNNPACK on). Same interface as MockBackend:
     generate(prompt) -> str
 
 Files (download once from the private HF repo, see download_models()):
-    models/llama3_2_1b_q8da4w_512.pte
+    models/llama3_2_1b_q8da4w_ctx512.pte
     models/tokenizer.model
 """
 import atexit
@@ -27,7 +27,7 @@ READY, DONE, ERR = b"<<LLM_READY>>", b"<<LLM_DONE>>", b"<<LLM_ERROR>>"
 
 
 def download_models(repo="iffatirfana/pcb-inspect-ps5-models", out="models",
-                    files=("llama3_2_1b_q8da4w_512.pte", "tokenizer.model")):
+                    files=("llama3_2_1b_q8da4w_ctx512.pte", "tokenizer.model")):
     """Fetch model files from the private HF repo (needs HF_TOKEN env var)."""
     from huggingface_hub import hf_hub_download
     Path(out).mkdir(exist_ok=True)
@@ -37,7 +37,7 @@ def download_models(repo="iffatirfana/pcb-inspect-ps5-models", out="models",
 
 
 class ExecuTorchBackend(Backend):
-    def __init__(self, pte="models/llama3_2_1b_q8da4w_512.pte",
+    def __init__(self, pte="models/llama3_2_1b_q8da4w_ctx512.pte",
                  tokenizer="models/tokenizer.model",
                  runner=None, max_new_tokens=150, temperature=0.0, threads=4,
                  persistent=True):

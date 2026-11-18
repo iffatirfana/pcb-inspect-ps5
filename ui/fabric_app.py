@@ -84,8 +84,8 @@ PAGE = """<!doctype html><html><head><meta charset="utf-8">
     <b>Route</b><span>{{ i.route }}</span><b>Check</b><span>{{ i.check }}</span>
     <b>Likely cause</b><span>{{ i.likely_cause }}</span></div>{% endfor %}
    {% elif a %}<p class="mut">Nothing to route.</p>{% endif %}</div>
-  <div class="card"><h3>Operator actions <span class="tag">{{ r.advice.source if r.advice else '-' }}</span></h3>
-   {% if r.advice %}<ol>{% for x in r.advice.actions %}<li>{{ x }}</li>{% endfor %}</ol>
+  <div class="card">{% if not r.advice or r.advice.source != 'off' %}<h3>Operator actions <span class="tag">{{ r.advice.source if r.advice else '-' }}</span></h3>{% endif %}
+   {% if r.advice and r.advice.source != 'off' %}<ol>{% for x in r.advice.actions %}<li>{{ x }}</li>{% endfor %}</ol>
    {% if r.advice.source.startswith('llm') and r.advice.risk %}<p><b>Risk:</b> {{ r.advice.risk }}</p>{% endif %}
    <p class="mut">{{ r.advice.summary }}</p>{% endif %}
    <p class="mut">Detect {{ r.timings.get('detect','-') }} ms &middot; to verdict {{ r.timings.to_verdict }} ms

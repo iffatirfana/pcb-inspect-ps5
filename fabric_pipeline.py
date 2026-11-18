@@ -249,6 +249,8 @@ def advise(rec, advisor=None, backend_name="mock"):
         adv = {"summary": "Photo not usable - no verdict given.", "risk": "Inspection not performed.",
                "actions": rec["invalid_reasons"] + ["Retake the photo."], "verdict": INVALID,
                "source": "template"}
+    elif not CFG.get("llm", {}).get("enabled", True):          # Llama advice switched off in config.yaml
+        adv = {"summary": "", "risk": "", "actions": [], "verdict": rec["verdict"], "source": "off"}
     else:
         if advisor is None:
             advisor = get_advisor()

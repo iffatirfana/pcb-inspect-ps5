@@ -62,6 +62,7 @@ yolo:
   classes: [open_circuit, short_circuit, mouse_bite, spur, spurious_copper, pin_hole]
 
 llm:
+  enabled: false     # false = no Llama advice (rules only); true = Llama writes the operator note
   backend: auto        # auto (ExecuTorch if built + model present, else mock) | executorch | mock
   pte: models/llama3_2_1b_q8da4w_ctx512.pte
   tokenizer: models/tokenizer.model
