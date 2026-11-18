@@ -66,6 +66,6 @@ llm:
   pte: models/llama3_2_1b_q8da4w_ctx512.pte
   tokenizer: models/tokenizer.model
   hf_repo: iffatirfana/pcb-inspect-ps5-models
-  max_new_tokens: 150
-  temperature: 0.0
+  max_new_tokens: 180
+  temperature: 0.2
   context_length: 480   # ctx512 .pte tested on the Pi up to a 469-token prompt; our prompt is about 300 tokens

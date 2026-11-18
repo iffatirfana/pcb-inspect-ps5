@@ -61,10 +61,9 @@ class ExecuTorchBackend(Backend):
                 f"--model_path={self.pte}",
                 f"--tokenizer_path={self.tokenizer}",
                 f"--seq_len={MAX_CTX - 1}",
+                f"--max_new_tokens={self.max_new_tokens}",
                 f"--temperature={self.temperature}",
                 f"--cpu_threads={self.threads}"]
-
-    # ---- persistent server: the model is loaded once and answers many prompts ----
     def _read_until(self, markers, timeout):
         fd, buf, end = self._proc.stdout.fileno(), b"", time.time() + timeout
         while True:
