@@ -9,7 +9,6 @@ Measured on the pattern cloth (synthetic defects, 14 fresh clean photos): see RE
 """
 import cv2
 import numpy as np
-from scipy.spatial import cKDTree
 
 INK_GRAY = 125          # blurred gray below this = printed ink (dark print on cream cloth)
 DENS_RATIO = 0.25       # gap if local ink < this fraction of a typical motif's local ink
@@ -36,11 +35,16 @@ def find_motifs(img, px_per_mm=5.0):
     return np.array(out, float)
 
 
+def _nearest(c, p):
+    return float(np.min(np.linalg.norm(c - p, axis=1)))
+
+
 def lattice(c):
     """Two dominant neighbour vectors (px), or None when the print is not a regular grid."""
     if len(c) < 12:
         return None
-    _, idx = cKDTree(c).query(c, k=5)
+    d = np.linalg.norm(c[:, None] - c[None], axis=2)
+    idx = np.argsort(d, axis=1)[:, :5]
     V = []
     for a in range(len(c)):
         for b in idx[a][1:]:
@@ -70,13 +74,12 @@ def find_gaps(img, px_per_mm=5.0):
     L = lattice(c)
     if L is None:
         return {"n_motifs": len(c), "regular": False, "gaps": []}
-    tree = cKDTree(c)
     cand = []
     for v in L:
         n = float(np.linalg.norm(v))
         for a in range(len(c)):
             p, q = c[a] + v, c[a] + 2 * v
-            if tree.query(p)[0] >= TOL * n and tree.query(q)[0] < TOL * n:
+            if _nearest(c, p) >= TOL * n and _nearest(c, q) < TOL * n:
                 cand.append(p)
     uniq = []
     for p in cand:

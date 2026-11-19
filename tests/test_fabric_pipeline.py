@@ -216,7 +216,9 @@ def test_heatmap_picture_written_when_anomaly_runs(monkeypatch, tmp_path):
     for scorer in (FakeScorer(200, 300, 200), FakeScorer(0)):          # flagged and quiet
         rec = fpl.inspect("blue", good_img(), detector=FakeDetector([]), anomaly_scorer=scorer)
         assert os.path.exists(rec["heatmap_image"])
-        assert cv2.imread(rec["heatmap_image"]).shape == good_img().shape
+        c = fpl.FAB["fabrics"]["blue"]                      # the picture is drawn after straightening and crop
+        expect = fpl.fp.crop_image(fpl.fcal.apply(good_img(), c), c.get("crop")).shape
+        assert cv2.imread(rec["heatmap_image"]).shape == expect
         assert rec["anomaly"]["limit"] == fpl.FAB["fabrics"]["blue"]["anomaly"]["image_fraction"]
 
 
