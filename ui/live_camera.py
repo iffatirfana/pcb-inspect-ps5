@@ -12,28 +12,54 @@ import time
 import cv2
 
 
-def open_capture(index=0):
-    """Open a USB webcam the way that worked on our machines: Windows MSMF without MJPG (DirectShow as a
-    fallback), Linux V4L2 with MJPG 1920x1080."""
-    if sys.platform.startswith("win"):
-        for api in (cv2.CAP_MSMF, cv2.CAP_DSHOW):
-            cap = cv2.VideoCapture(index, api)
-            if cap.isOpened():
-                cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
-                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
-                return cap
-            cap.release()
-        return cv2.VideoCapture(index)
-    cap = cv2.VideoCapture(index, cv2.CAP_V4L2) if sys.platform.startswith("linux") else cv2.VideoCapture(index)
-    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+def _set_size(cap, mjpg):
+    if mjpg:
+        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
     return cap
 
 
+def candidates(index=0):
+    """Ways to open a USB webcam, best first. Opened lazily: the next one is tried only if the previous gives
+    no picture (some cameras open fine but send black frames with one backend)."""
+    if sys.platform.startswith("win"):
+        for api, mjpg in ((cv2.CAP_MSMF, False), (cv2.CAP_DSHOW, False), (cv2.CAP_DSHOW, True)):
+            yield _set_size(cv2.VideoCapture(index, api), mjpg)
+    elif sys.platform.startswith("linux"):
+        yield _set_size(cv2.VideoCapture(index, cv2.CAP_V4L2), True)
+        yield _set_size(cv2.VideoCapture(index), False)
+    else:
+        yield _set_size(cv2.VideoCapture(index), False)
+
+
+def open_capture(index=0):
+    """First candidate that opens (kept for callers that want a plain capture)."""
+    for cap in candidates(index):
+        if cap.isOpened():
+            return cap
+        cap.release()
+    return cv2.VideoCapture(index)
+
+
+def probe(cap, tries=30, discard=6, min_mean=3.0):
+    """Read a few frames; True when a real (not black) picture arrives. Returns (ok, frame)."""
+    last = None
+    for n in range(tries):
+        ok, f = cap.read()
+        if not ok or f is None:
+            time.sleep(0.05)
+            continue
+        if n >= discard and float(f.mean()) >= min_mean:
+            return True, f
+        last = f
+        time.sleep(0.03)
+    return False, last
+
+
 class LiveCamera:
     def __init__(self, index=0, opener=None, stream_width=960, fps=15):
-        self.index, self.opener = index, opener or open_capture
+        self.index, self.opener = index, opener
         self.stream_width, self.delay = stream_width, 1.0 / fps
         self._lock = threading.Lock()
         self._frame = None
@@ -52,19 +78,34 @@ class LiveCamera:
             return
         self.error, self._frame, self._jpeg = None, None, None
         self._stop.clear()
-        cap = self.opener(self.index)
-        if not cap.isOpened():
+        gen = iter([self.opener(self.index)]) if self.opener else candidates(self.index)
+        opened = black = False
+        for cap in gen:
+            if not cap.isOpened():
+                cap.release()
+                continue
+            opened = True
+            ok, first = probe(cap)
+            if ok:
+                self._thread = threading.Thread(target=self._loop, args=(cap, first), daemon=True)
+                self._thread.start()
+                return
+            black = True
             cap.release()
+        if not opened:
             self.error = "Camera not found. Close other programs that use it, then try again."
-            return
-        self._thread = threading.Thread(target=self._loop, args=(cap,), daemon=True)
-        self._thread.start()
+        elif black:
+            self.error = ("The camera opens but sends a black picture. Close other programs that use it (Camera app, "
+                          "Teams, a shoot.py window), remove any lens cover, or unplug and replug it, then press Start again.")
 
-    def _loop(self, cap):
+    def _loop(self, cap, first=None):
         bad = 0
         try:
             while not self._stop.is_set():
-                ok, frame = cap.read()
+                if first is not None:
+                    ok, frame, first = True, first, None
+                else:
+                    ok, frame = cap.read()
                 if not ok or frame is None:
                     bad += 1
                     if bad > 30:

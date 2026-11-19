@@ -221,3 +221,15 @@ def test_pattern_page_no_file(client):
 def test_fabric_selector(client):
     html = client.get("/").get_data(as_text=True)
     assert "<select name=\"fabric\"" in html and "Pattern check" in html
+
+
+def test_live_camera_black_frames_gives_clear_message(client, monkeypatch):
+    from ui.live_camera import LiveCamera
+
+    class BlackCap(FakeCap):
+        def read(self):
+            return True, np.zeros((480, 640, 3), np.uint8)
+    cap = BlackCap()
+    monkeypatch.setattr(fabric_app, "LIVE", LiveCamera(opener=lambda i: cap))
+    html = client.post("/live/start", follow_redirects=True).get_data(as_text=True)
+    assert "sends a black picture" in html and cap.released
