@@ -110,8 +110,7 @@ if __name__ == "__main__":
                  source=c.get("source", "auto"), usb_index=c.get("usb_index", 0),
                  usb_size=tuple(c.get("usb_size", (640, 480))),
                  usb_exposure=c.get("usb_exposure"),
-                 usb_lock_wb=c.get("usb_lock_wb", False),
-                 fallback_image="kb/boards/sample_synthetic/test_board.png")
+                 usb_lock_wb=c.get("usb_lock_wb", False))
     img = cam.capture()
     print("source:", cam.source, "| shape:", img.shape)
     if cam.reason:
