@@ -17,6 +17,7 @@ import cv2
 import numpy as np
 import yaml
 
+import fabric_calib as fcal
 import fabric_profile as fp
 from fabric_quality import cloth_quality
 from fabric_advisor import FabricAdvisor, FabricMockBackend, build_user_message
@@ -24,6 +25,9 @@ from vision.quality import check_capture
 
 CFG = yaml.safe_load(open("config.yaml", encoding="utf-8"))
 FAB = yaml.safe_load(open("kb/fabric.yaml", encoding="utf-8"))
+for _name, _cal in fcal.load().items():       # kb/calibration.json (tools/calibrate.py) overrides the scale
+    if _name in FAB["fabrics"]:
+        FAB["fabrics"][_name].update(_cal)
 INVALID = "INVALID_CAPTURE"
 _scorers = {}
 _detectors = {}
@@ -189,6 +193,7 @@ def inspect(fabric=None, image=None, scorer=None, detector=None, anomaly_scorer=
     img = image if image is not None else capture();            lap("capture")
     ok, reasons, rec["quality"] = check_capture(img, {**(CFG.get("quality") or {}), **(FAB.get("quality") or {})});  lap("quality")
     if ok:
+        img = fcal.apply(img, c)                       # straighten a tilted camera, if calibrated
         img = fp.crop_image(img, c.get("crop"))
         hm_overlay = None
         if c.get("detector", "anomaly") == "yolo":
