@@ -40,7 +40,9 @@ cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920); cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080
 if not cap.isOpened():
     raise SystemExit("Camera did not open. Try --index 1 or --backend msmf")
 out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
-n = len(list(out.glob(a.prefix + "*.png")))
+import re
+_nums = [int(m.group(1)) for q in out.glob(a.prefix + "*.png") for m in [re.search(r"(\d+)\.png$", q.name)] if m]
+n = max(_nums) if _nums else 0     # continue after the highest number, never overwrite
 print("Camera ready, size", int(cap.get(3)), "x", int(cap.get(4)), "- next file number", n + 1)
 
 if a.live:
