@@ -27,19 +27,29 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--index", type=int, default=0)
     ap.add_argument("--out", default="data/photos")
+    ap.add_argument("--no-mjpg", action="store_true", help="do not force MJPG (try this if the picture stays black)")
+    ap.add_argument("--backend", choices=["dshow", "msmf", "any"], default="dshow", help="Windows camera backend")
     a = ap.parse_args()
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
-    cap = cv2.VideoCapture(a.index, cv2.CAP_DSHOW) if sys.platform.startswith("win") else cv2.VideoCapture(a.index)
-    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+    if sys.platform.startswith("win") and a.backend != "any":
+        cap = cv2.VideoCapture(a.index, cv2.CAP_DSHOW if a.backend == "dshow" else cv2.CAP_MSMF)
+    else:
+        cap = cv2.VideoCapture(a.index)
+    if not a.no_mjpg:
+        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
     if not cap.isOpened():
         sys.exit("Camera not found. Try --index 1.")
-    ok, frame = cap.read()
+    for _ in range(40):                  # warm-up: the first frames are often black while exposure settles
+        ok, frame = cap.read()
     if not ok:
         sys.exit("Camera gave no frame.")
     h, w = frame.shape[:2]
+    if frame.mean() < 5:
+        print("WARNING: the picture is black. Close other apps using the camera (Camera, Teams, Zoom), "
+              "check the lens is not covered, then try: --backend msmf   or   --no-mjpg   or   --index 1")
     print(f"Camera size: {w}x{h}" + ("" if (w, h) == (1920, 1080) else "   WARNING: not 1920x1080"))
     counts = {c: len(list(out.glob(f"{c}_*.png"))) for c in KEYS.values()}
     msg = ""
