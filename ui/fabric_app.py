@@ -20,14 +20,20 @@ import numpy as np
 from flask import Flask, Response, redirect, render_template_string, request, send_file, url_for
 
 import fabric_actions as fa
+import fabric_quality as fq
+import fabric_pattern as fpat
+import fabric_calib as fcal
 import fabric_pipeline as fpipe
+from ui.live_camera import LiveCamera
 
 app = Flask(__name__)
 LOCK = threading.Lock()          # one inspection at a time; the Llama runner is not re-entrant
-STATE = {"rec": None, "action": None, "error": None, "guidance": None}
+STATE = {"rec": None, "action": None, "error": None, "guidance": None, "label": None, "fabric": None}
+PSTATE = {"result": None}
 FABRIC = fpipe.FAB["fabric"]
 STARTED = time.time()
 SESSION = {"id": None}
+LIVE = LiveCamera(index=fpipe.CFG.get("camera", {}).get("usb_index", 0))
 VERDICTS = ("PASS", "REVIEW", "REWORK", "REJECT")
 REASONS = ["Correct call", "Not a defect (lint, fold, shadow)", "Wrong severity", "Wrong zone or size", "Defect missed", "Bad photo or lighting", "Other"]
 
@@ -61,11 +67,21 @@ PAGE = """<!doctype html><html><head><meta charset="utf-8">
  .stat{background:var(--card);border-radius:8px;padding:10px 12px}.stat b{display:block;font-size:22px}.stat span{font-size:12px;color:var(--mut)}
  .qual{font-size:22px;text-align:right}.qual small{display:block;font-size:12px;font-weight:normal;opacity:.85}
  select,input[type=text]{background:#2a2a2a;color:#eee;border:1px solid #444;border-radius:6px;padding:7px;font-size:14px}
+ .why{border-left:4px solid #2d7ff9;padding:8px 12px;background:#202833;border-radius:4px;font-size:15px}
+ .legend{height:12px;border-radius:6px;background:linear-gradient(to right,#00007f,#0000ff,#00ffff,#ffff00,#ff0000,#7f0000);position:relative;margin:10px 0 4px}
+ .legend i{position:absolute;top:-4px;height:20px;border-left:2px solid #fff}
+ .lg{display:flex;justify-content:space-between;font-size:12px;color:var(--mut)}
+ tr.over td{background:#3a1f1f} details summary{cursor:pointer;color:#9ecbff;font-size:14px} details p,details li{font-size:13px;color:#ccc}
+ .badge{display:inline-block;padding:3px 10px;border-radius:12px;font-size:13px;font-weight:bold;margin-left:8px}.ai{background:#333;color:#ddd}.op{background:#1f6b3a;color:#fff}.opx{background:#8a4b00;color:#fff}
  .dev{font-size:12px;color:var(--mut);display:flex;gap:14px;flex-wrap:wrap}
 </style></head><body>
 <header><div><h1>Fabric Inspection Station &middot; offline &middot; {{ fabric }}</h1>
  <div class="dev"><span>This session: {{ dev.session }}</span><span>Total device use: {{ dev.total }}</span>
  <span>Inspections logged: {{ stats.all }}</span></div></div>
+<form class="row" method="post" action="{{ url_for('set_fabric') }}">
+ <select name="fabric" onchange="this.form.submit()" title="Fabric">{% for k in fabrics %}<option {{ 'selected' if k == fabric else '' }}>{{ k }}</option>{% endfor %}</select>
+ <a class="btn alt" href="{{ url_for('pattern_page') }}" style="text-decoration:none">Pattern check</a>
+</form>
 <form class="row" method="post" action="{{ url_for('do_inspect') }}" enctype="multipart/form-data">
  <input type="file" name="photo" accept="image/*">
  <button name="source" value="upload">Inspect photo</button>
@@ -79,26 +95,57 @@ PAGE = """<!doctype html><html><head><meta charset="utf-8">
  <div class="stat"><b style="color:#ff5252">{{ stats.REJECT }}</b><span>Rejected</span></div>
  <div class="stat"><b>{{ stats.rate }}</b><span>Pass rate today</span></div>
 </div>
+<div style="padding:12px 16px 0"><div class="card"><h3>Live camera
+  <span class="tag">{% if live.running %}on{% else %}off{% endif %}</span>
+  {% if live.running and live.size %}<span class="tag">{{ live.size[0] }} &times; {{ live.size[1] }}</span>{% endif %}</h3>
+ {% if live.running %}
+  <img src="{{ url_for('live_stream') }}" alt="Live camera" style="max-width:760px;width:100%">
+  <div class="row" style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+   <form method="post" action="{{ url_for('do_inspect') }}"><button name="source" value="live">Capture &amp; inspect this frame</button></form>
+   <form method="post" action="{{ url_for('live_stop') }}"><button class="alt">Stop camera</button></form></div>
+  <p class="mut">The photo that is inspected is the frame you see here, at full camera size.</p>
+ {% else %}
+  <form method="post" action="{{ url_for('live_start') }}"><button>Start live view</button></form>
+  <p class="mut">Shows the camera here so you can place the cloth, then capture and inspect with one click.
+   Press Stop afterwards so other tools can use the camera.</p>
+ {% endif %}
+ {% if live.error %}<div class="err" style="margin:8px 0 0">{{ live.error }}</div>{% endif %}</div></div>
 {% if r %}
-<div class="banner {{ r.verdict }}"><span>{{ r.verdict.replace('_',' ') }}</span>
+<div class="banner {{ r.verdict }}"><span>{{ r.verdict.replace('_',' ') }}
+  {% if lab %}{% if lab.corrected %}<span class="badge opx">Operator changed to {{ lab.corrected }}</span>
+  {% elif lab.kind == 'correct' %}<span class="badge op">Operator confirmed</span>
+  {% else %}<span class="badge opx">Operator: {{ lab.kind }}</span>{% endif %}
+  {% else %}<span class="badge ai">AI verdict &middot; not yet confirmed</span>{% endif %}
+  <small style="display:block;margin-top:4px">Inspection #{{ r.id }} &middot; {{ r.ts }}</small></span>
  <span class="qual">{% if r.cloth_quality %}Cloth quality {{ r.cloth_quality.score }}/100 &middot; Grade {{ r.cloth_quality.grade }}
   <small>{{ r.cloth_quality.label }}{% if a %} &middot; {{ a.disposition }} &middot; urgency: {{ a.urgency }}{% endif %}</small>
   {% else %}<small>Photo not usable</small>{% endif %}</span></div>
 <main>
  <div>
+  <div class="card why"><b>Why this verdict:</b> {{ why }}</div>
   <div class="card">{% if r.image %}<img src="{{ url_for('image') }}?id={{ r.id }}" alt="Inspected fabric">
    {% else %}<p>No image: {{ r.invalid_reasons|join('; ') }}</p>{% endif %}</div>
   {% if r.heatmap_image %}<div class="card"><h3>Anomaly heatmap <span class="tag">second opinion</span></h3>
    <img src="{{ url_for('heatmap') }}?id={{ r.id }}" alt="Anomaly heatmap">
+   <div class="legend"><i style="left:62.5%"></i></div>
+   <div class="lg"><span>0 &middot; normal</span><span>flag threshold</span><span>high &middot; unusual</span></div>
+   <p class="mut">Real output of the second-opinion model (ResNet18 features compared with a bank of normal denim), not a drawing.</p>
    <p class="mut">Yellow and red areas look unusual compared with normal fabric (outlined in white). The second opinion flags
     the photo when more than {{ (r.anomaly.limit * 100)|round(1) }}% of it is unusual; this photo: {{ (r.anomaly.fraction * 100)|round(1) }}%.</p></div>{% endif %}
-  <div class="card"><h3>Fabric info</h3><div class="kv">
-   <b>Fabric</b><span>{{ fabric }}</span><b>Scale</b><span>{{ ppm }} px/mm {% if r.uncalibrated %}(not calibrated){% else %}(calibrated){% endif %}</span>
-   <b>Inspected</b><span>{{ r.ts }}</span></div></div>
-  <div class="card"><h3>Findings</h3>
-   {% if r.findings %}<table><tr><th>Type</th><th>Severity</th><th>Area</th><th>Zone</th><th>Conf.</th></tr>
-   {% for f in r.findings %}<tr><td>{{ f.type }}</td><td class="{{ f.severity }}">{{ f.severity }}</td>
-    <td>{% if f.wide %}wide area{% else %}{{ f.area_mm2 }} mm&sup2;{% endif %}</td><td>{{ f.zone }}</td><td>{{ f.confidence if f.confidence is not none else '-' }}</td></tr>{% endfor %}</table>
+  <div class="card"><h3>Fabric and measurement</h3><div class="kv">
+   <b>Fabric</b><span>{{ fabric }}</span>
+   <b>Scale</b><span>{{ ppm }} px/mm &middot; {% if r.uncalibrated %}not calibrated{% else %}calibrated (ruler photo){% endif %}</span>
+   <b>Camera frame</b><span>{% if r.input_size %}{{ r.input_size[0] }} &times; {{ r.input_size[1] }} px{% else %}-{% endif %}</span>
+   <b>Model</b><span>{{ info.model }} &middot; confidence &ge; {{ info.conf }}</span>
+   <b>Inference</b><span>{{ r.timings.get('detect', '-') }} ms</span>
+   <b>Units</b><span>area in mm&sup2;, width and height in mm</span></div></div>
+  <div class="card"><h3>Findings{% if counts %} <span class="tag">{{ counts }}</span>{% endif %}</h3>
+   {% if r.findings %}<table><tr><th>#</th><th>Type</th><th>Severity</th><th>Area (mm&sup2;)</th><th>W &times; H (mm)</th><th>Zone</th><th>Conf.</th></tr>
+   {% for f in r.findings %}<tr class="{{ 'over' if f.severity != 'Low' else '' }}"><td>{{ loop.index }}</td><td>{{ f.type }}</td><td class="{{ f.severity }}">{{ f.severity }}</td>
+    <td>{% if f.wide %}wide area{% elif f.area_mm2 %}{{ f.area_mm2 }}{% else %}-{% endif %}</td>
+    <td>{% if f.width_mm and f.height_mm %}{{ f.width_mm }} &times; {{ f.height_mm }}{% else %}-{% endif %}</td>
+    <td>{{ f.zone }}</td><td>{{ (f.confidence * 100)|round|int ~ '%' if f.confidence is not none else '-' }}</td></tr>{% endfor %}</table>
+   <p class="mut">Highlighted rows are Medium or High: above the {{ rules.low_max_mm2 }} mm&sup2; limit for a small mark. Size comes from the calibrated scale.</p>
    {% else %}<p class="mut">No defects found.</p>{% endif %}</div>
  </div>
  <div>
@@ -116,6 +163,13 @@ PAGE = """<!doctype html><html><head><meta charset="utf-8">
    <p class="mut">{{ r.advice.summary }}</p>{% endif %}
    <p class="mut">Detect {{ r.timings.get('detect','-') }} ms &middot; to verdict {{ r.timings.to_verdict }} ms
     &middot; advice {{ r.timings.get('llm','-') }} ms &middot; total {{ r.timings.get('total','-') }} ms</p></div>
+  <div class="card"><details><summary>How the quality score and grade are worked out</summary>
+   <p>Start at 100. Each finding costs points by severity: Low {{ q.Low }}, Medium {{ q.Medium }}, High {{ q.High }},
+    up to 50% more for large defects (area up to 400 mm&sup2;). A photo flagged only by the second-opinion model costs {{ q.anom }}.</p>
+   <p>The verdict sets a ceiling so the grade never contradicts it: PASS up to 100, REVIEW {{ q.REVIEW }}, REWORK {{ q.REWORK }}, REJECT {{ q.REJECT }}.</p>
+   <p>Grade A = 90 or more, B = 75-89, C = 55-74, D = below 55.
+    Severity: Low is under {{ rules.low_max_mm2 }} mm&sup2;, Medium is {{ rules.low_max_mm2 }} to {{ rules.medium_max_mm2 }} mm&sup2;, High is {{ rules.medium_max_mm2 }} mm&sup2; or more.</p>
+   <p>The verdict is set by rules, not by a language model. Findings are AI detections until an operator confirms them below.</p></details></div>
   <div class="card"><h3>Operator feedback</h3>
    <form method="post" action="{{ url_for('label') }}" style="display:grid;gap:8px">
     <label class="mut">Correct verdict
@@ -137,6 +191,15 @@ PAGE = """<!doctype html><html><head><meta charset="utf-8">
 </table></div></div></body></html>"""
 
 
+def fab():
+    """Fabric chosen in the header (defaults to the one in kb/fabric.yaml)."""
+    return STATE["fabric"] or FABRIC
+
+
+def fabric_choices():
+    return [k for k, v in fpipe.FAB["fabrics"].items() if v.get("yolo_model")]
+
+
 def history(limit=10):
     db = Path(fpipe.CFG["paths"]["db"])
     if not db.exists():
@@ -155,6 +218,45 @@ def history(limit=10):
                     "ms": t.get("total", t.get("to_verdict", "-")), "label": lab,
                     "q": int(q) if q not in (None, "") else None})
     return out
+
+
+def why_verdict(rec):
+    """One plain sentence, from the same rules that set the verdict."""
+    rules = fpipe.FAB["rules"]
+    f = rec.get("findings") or []
+    if rec["verdict"] == fpipe.INVALID:
+        return "The photo failed the quality gate (%s), so nothing was judged." % ("; ".join(rec["invalid_reasons"]) or "unusable")
+    if not f:
+        return "No defect was found, so the piece passes."
+    if all(x.get("type") == "Anomaly" for x in f):
+        a = rec.get("anomaly") or {}
+        return ("Only the second-opinion model flagged this photo (%.1f%% of it looks unusual, limit %.1f%%). "
+                "That can raise PASS to REVIEW, never more: check it by eye." % (100 * a.get("fraction", 0), 100 * a.get("limit", 0)))
+    if all(x.get("type") == "Pattern gap" for x in f):
+        return ("%d place(s) where a printed motif seems to be missing. The pattern check is a hint only: "
+                "REVIEW, never rework or reject. Check the marked spot by eye." % len(f))
+    big = max(f, key=lambda x: x.get("area_mm2") or 0)
+    sev = {x["severity"] for x in f}
+    size = "%s of %s mm\u00b2" % (big.get("type", "Defect"), big.get("area_mm2"))
+    if "High" in sev:
+        return "REJECT because the largest defect (%s) is at least %s mm\u00b2." % (size, rules["medium_max_mm2"])
+    if "Medium" in sev:
+        return "REWORK because the largest defect (%s) is between %s and %s mm\u00b2." % (size, rules["low_max_mm2"], rules["medium_max_mm2"])
+    if len(f) > rules["max_defects_for_review"]:
+        return "REWORK because there are %d defects, more than the %d allowed for a review." % (len(f), rules["max_defects_for_review"])
+    return "REVIEW because only small marks were found (largest %s, under %s mm\u00b2): an operator checks by eye." % (size, rules["low_max_mm2"])
+
+
+def category_counts(rec):
+    c = {}
+    for x in rec.get("findings") or []:
+        c[x.get("type", "Defect")] = c.get(x.get("type", "Defect"), 0) + 1
+    return ", ".join("%s \u00d7%d" % (k, v) for k, v in c.items())
+
+
+def model_info():
+    c = fpipe.FAB["fabrics"][fab()]
+    return {"model": Path(c.get("yolo_model", c.get("backbone_onnx", "-"))).name, "conf": c.get("yolo_conf", "-")}
 
 
 def _hms(seconds):
@@ -215,15 +317,25 @@ def grab_camera(index=0):
 @app.get("/")
 def index():
     return render_template_string(PAGE, r=STATE["rec"], a=STATE["action"], error=STATE["error"],
-                                  history=history(), fabric=FABRIC, dev=device_info(), stats=stats(),
-                                  ppm=fpipe.FAB["fabrics"][FABRIC]["px_per_mm"], verdicts=VERDICTS, reasons=REASONS)
+                                  history=history(), fabric=fab(), fabrics=fabric_choices(), live=LIVE, dev=device_info(), stats=stats(),
+                                  ppm=fpipe.FAB["fabrics"][fab()]["px_per_mm"], verdicts=VERDICTS, reasons=REASONS,
+                                  lab=STATE["label"], rules=fpipe.FAB["rules"], info=model_info(),
+                                  why=(why_verdict(STATE["rec"]) if STATE["rec"] else ""),
+                                  counts=(category_counts(STATE["rec"]) if STATE["rec"] else ""),
+                                  q={"Low": fq.SEVERITY_COST["Low"], "Medium": fq.SEVERITY_COST["Medium"], "High": fq.SEVERITY_COST["High"],
+                                     "anom": fq.ANOMALY_COST, "REVIEW": fq.CEILING["REVIEW"], "REWORK": fq.CEILING["REWORK"],
+                                     "REJECT": fq.CEILING["REJECT"]})
 
 
 @app.post("/inspect")
 def do_inspect():
     STATE["error"] = None
     try:
-        if request.form.get("source") == "camera":
+        if request.form.get("source") == "live" or (request.form.get("source") == "camera" and LIVE.running):
+            img = LIVE.snapshot()
+            if img is None:
+                raise ValueError("Start the live view and wait for the picture first.")
+        elif request.form.get("source") == "camera":
             img = grab_camera(fpipe.CFG.get("camera", {}).get("usb_index", 0))
         else:
             f = request.files.get("photo")
@@ -233,7 +345,7 @@ def do_inspect():
             if img is None:
                 raise ValueError("That file is not a readable image.")
         with LOCK:
-            rec = fpipe.inspect(FABRIC, img)
+            rec = fpipe.inspect(fab(), img)
             fpipe.advise(rec)
         if STATE["guidance"] is None:
             STATE["guidance"] = fa.load_guidance()
@@ -244,6 +356,7 @@ def do_inspect():
             STATE["action"]["notes"].insert(0, "Flagged by the second-opinion model only (detector found no defect): "
                                                "confirm by eye.")
         STATE["rec"] = rec
+        STATE["label"] = None
     except Exception as e:               # show the problem on the page instead of a 500
         STATE["error"] = str(e)
     return redirect(url_for("index"))
@@ -257,6 +370,7 @@ def label():
         corrected = request.form.get("corrected")
         fpipe.operator_label(rec["id"], kind, request.form.get("reason"), request.form.get("note"),
                              corrected if corrected in VERDICTS else None)
+        STATE["label"] = {"kind": kind, "corrected": corrected if corrected in VERDICTS else None}
     return redirect(url_for("index"))
 
 
@@ -275,6 +389,236 @@ def export_csv():
     w.writerows(rows)
     return Response(buf.getvalue(), mimetype="text/csv",
                     headers={"Content-Disposition": "attachment; filename=fabric_inspections.csv"})
+
+
+
+@app.post("/fabric")
+def set_fabric():
+    k = request.form.get("fabric")
+    if k in fabric_choices():
+        STATE["fabric"] = k
+    return redirect(url_for("index"))
+
+
+@app.post("/live/start")
+def live_start():
+    LIVE.start()
+    if LIVE.running:
+        LIVE.wait_frame()
+    return redirect(url_for("index"))
+
+
+@app.post("/live/stop")
+def live_stop():
+    LIVE.stop()
+    return redirect(url_for("index"))
+
+
+@app.get("/live.mjpg")
+def live_stream():
+    resp = Response(LIVE.mjpeg(), mimetype="multipart/x-mixed-replace; boundary=frame")
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+# ------------------------------------------------------------------ pattern check page
+
+def _straighten(img):
+    """Photos from the camera are straightened with the saved calibration. A photo already at the straightened
+    size (for example from data/photos_corrected) is left alone."""
+    c = fpipe.FAB["fabrics"][fab()]
+    ws = tuple(c.get("warp_size") or ())
+    if c.get("homography") and (img.shape[1], img.shape[0]) != ws:
+        return fcal.apply(img, c)
+    return img
+
+
+def _decode(f):
+    img = cv2.imdecode(np.frombuffer(f.read(), np.uint8), cv2.IMREAD_COLOR)
+    if img is None:
+        raise ValueError("%s is not a readable image." % (f.filename or "That file"))
+    return img
+
+
+def _fit(img, width=1100):
+    h, w = img.shape[:2]
+    return img if w <= width else cv2.resize(img, (width, int(h * width / w)))
+
+
+def _png(img):
+    return cv2.imencode(".png", img)[1].tobytes()
+
+
+def _draw_gaps(img, gaps):
+    out = img.copy()
+    r = max(30, int(0.04 * img.shape[1]))
+    th = max(2, img.shape[1] // 500)
+    for n, (x, y) in enumerate(gaps, 1):
+        cv2.circle(out, (int(x), int(y)), r, (0, 0, 255), th)
+        cv2.putText(out, "#%d" % n, (int(x) - r, int(y) - r - 8), cv2.FONT_HERSHEY_SIMPLEX,
+                    max(0.8, img.shape[1] / 1200.0), (0, 0, 255), 2, cv2.LINE_AA)
+    return out
+
+
+def _draw_compare(cmp):
+    ref, test = cmp["ref"].copy(), cmp["warped"].copy()
+    th = max(2, ref.shape[1] // 500)
+    for n, (x, y, w, h, iou) in enumerate(cmp["diffs"], 1):
+        for im in (ref, test):
+            cv2.rectangle(im, (x - 6, y - 6), (x + w + 6, y + h + 6), (0, 0, 255), th)
+            cv2.putText(im, "#%d" % n, (x, max(20, y - 12)), cv2.FONT_HERSHEY_SIMPLEX, max(0.8, ref.shape[1] / 1200.0),
+                        (0, 0, 255), 2, cv2.LINE_AA)
+    return np.hstack([_fit(ref, 720), _fit(test, 720)])
+
+
+PATTERN_PAGE = """<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>Pattern check</title>
+__STYLE__
+<style>.thumbs{display:flex;flex-wrap:wrap;gap:10px}.thumbs div{width:170px}.thumbs img{height:110px;object-fit:cover}
+ .pair{display:grid;grid-template-columns:1fr 1fr;gap:6px}</style></head><body>
+<header><div><h1>Pattern check &middot; {{ fabric }} &middot; offline</h1>
+ <div class="dev"><span>Missing-motif check and comparison with reference photos. Hints for the operator: the main inspection decides the verdict.</span></div></div>
+ <a class="btn alt" href="{{ url_for('index') }}" style="text-decoration:none">&larr; Back to inspection</a></header>
+{% if error %}<div class="err">{{ error }}</div>{% endif %}
+<main>
+ <div>
+  <div class="card"><h3>1. Reference photos <span class="tag">{{ refs|length }}</span></h3>
+   <p class="mut">Add photos of <b>good</b> cloth: 3 to 10 clear photos covering different parts of the cloth, taken with the same
+    camera and height. They set the expected motif spacing and let the check compare a test photo with the same part of the cloth.</p>
+   <form method="post" action="{{ url_for('pattern_refs') }}" enctype="multipart/form-data" class="row" style="display:flex;gap:8px;flex-wrap:wrap">
+    <input type="file" name="refs" accept="image/*" multiple>
+    <button name="action" value="add">Add reference photos</button>
+    {% if live.running %}<button name="action" value="add_live" class="alt">Add current camera frame</button>{% endif %}</form>
+   {% if prof %}<p class="mut">Learned from {{ prof.n_refs }} photo(s): about {{ prof.motifs|round|int }} motifs per photo, motif spacing {{ prof.spacing|round|int }} px.</p>
+   {% elif refs %}<p class="mut">No regular motif grid found in the reference photos yet.</p>{% endif %}
+   <div class="thumbs">{% for n in refs %}<div><img src="{{ url_for('pattern_ref_img', name=n) }}" alt="{{ n }}">
+    <form method="post" action="{{ url_for('pattern_refs') }}"><input type="hidden" name="name" value="{{ n }}">
+     <span class="mut">{{ n }}</span> <button name="action" value="delete" class="alt" style="padding:3px 10px;font-size:12px">Remove</button></form></div>{% endfor %}</div></div>
+  <div class="card"><h3>2. Photo to check</h3>
+   <form method="post" action="{{ url_for('pattern_check') }}" enctype="multipart/form-data" style="display:grid;gap:8px">
+    <input type="file" name="photo" accept="image/*">
+    <label class="mut"><input type="checkbox" name="compare" value="1" {{ 'checked' if refs else 'disabled' }}> Also compare with the reference photos</label>
+    <div class="row" style="display:flex;gap:8px;flex-wrap:wrap"><button name="source" value="upload">Check photo</button>
+     {% if live.running %}<button name="source" value="live" class="alt">Check current camera frame</button>{% else %}
+     <span class="mut">Start the live view on the inspection page to check a camera frame.</span>{% endif %}</div></form></div>
+ </div>
+ <div>
+ {% if res %}
+  <div class="card"><div class="banner {{ 'REVIEW' if res.review else 'PASS' }}" style="font-size:22px;border-radius:6px">
+   {{ 'REVIEW: look at the marked spots' if res.review else 'Nothing found by these checks' }}</div>
+   <p class="mut">{{ res.ms }} ms &middot; hint only, not a verdict. {{ res.note }}</p>
+   {% for w in res.warnings %}<div class="warn">{{ w }}</div>{% endfor %}</div>
+  <div class="card"><h3>Missing-motif check</h3>
+   <img src="{{ url_for('pattern_img', name='gaps') }}?t={{ res.t }}" alt="Missing motif check">
+   <p>{{ res.n_motifs }} motifs found.
+    {% if not res.regular %}No regular motif grid in this photo, so this check could not run.
+    {% elif res.gaps %}<b>{{ res.gaps|length }} place(s) where a motif seems to be missing</b> (circled).
+    {% else %}No missing motif found.{% endif %}</p></div>
+  {% if res.compare %}<div class="card"><h3>Comparison with reference photo</h3>
+   {% if res.compare.matched %}
+    <img src="{{ url_for('pattern_img', name='compare') }}?t={{ res.t }}" alt="Reference and test">
+    <p class="mut">Left: reference. Right: your photo lined up on it. Red boxes: motifs whose shape differs.</p>
+    <p>Matched reference #{{ res.compare.index + 1 }} ({{ res.compare.inliers }} matching points). {{ res.compare.checked }} motifs compared:
+     {% if res.compare.diffs %}<b>{{ res.compare.diffs }} differ</b>.{% else %}none differ.{% endif %}</p>
+   {% else %}<p>This photo could not be lined up with any reference, so no comparison was made. Add a reference photo of this part of the cloth.</p>{% endif %}
+  </div>{% endif %}
+ {% else %}<div class="card">Add reference photos, then upload a photo to check.</div>{% endif %}
+ </div>
+</main></body></html>"""
+PATTERN_PAGE = PATTERN_PAGE.replace("__STYLE__", PAGE[PAGE.index("<style>"):PAGE.index("</style>") + 8])
+
+
+@app.get("/pattern")
+def pattern_page():
+    c = fpipe.FAB["fabrics"][fab()]
+    refs = [p.name for p in fpat.list_refs(fab())]
+    return render_template_string(PATTERN_PAGE, fabric=fab(), refs=refs, live=LIVE, res=PSTATE["result"],
+                                  prof=fpat.load_profile(fab(), c["px_per_mm"]) if refs else None,
+                                  error=PSTATE.pop("error", None))
+
+
+@app.post("/pattern/refs")
+def pattern_refs():
+    act = request.form.get("action")
+    try:
+        if act == "add":
+            n = 0
+            for f in request.files.getlist("refs"):
+                if f and f.filename:
+                    fpat.add_ref(fab(), _straighten(_decode(f)))
+                    n += 1
+            if not n:
+                raise ValueError("Choose one or more photos first.")
+        elif act == "add_live":
+            img = LIVE.snapshot()
+            if img is None:
+                raise ValueError("Start the live view first.")
+            fpat.add_ref(fab(), _straighten(img))
+        elif act == "delete":
+            fpat.delete_ref(fab(), request.form.get("name", ""))
+    except Exception as e:
+        PSTATE["error"] = str(e)
+    return redirect(url_for("pattern_page"))
+
+
+@app.get("/pattern/ref/<name>")
+def pattern_ref_img(name):
+    p = fpat.ref_dir(fab()) / Path(name).name
+    if not p.exists():
+        return ("", 404)
+    img = cv2.imread(str(p))
+    return Response(cv2.imencode(".jpg", _fit(img, 340))[1].tobytes(), mimetype="image/jpeg")
+
+
+@app.post("/pattern/check")
+def pattern_check():
+    try:
+        if request.form.get("source") == "live":
+            img = LIVE.snapshot()
+            if img is None:
+                raise ValueError("Start the live view first.")
+        else:
+            f = request.files.get("photo")
+            if not f or not f.filename:
+                raise ValueError("Choose a photo first.")
+            img = _decode(f)
+        t0 = time.perf_counter()
+        img = _straighten(img)
+        ppm = fpipe.FAB["fabrics"][fab()]["px_per_mm"]
+        prof = fpat.load_profile(fab(), ppm)
+        g = fpat.find_gaps(img, ppm, prof)
+        warnings = []
+        if g["spacing_ratio"] is not None and not 0.85 <= g["spacing_ratio"] <= 1.15:
+            warnings.append("The motifs are %.0f%% of the size seen in the reference photos. Check the camera height or "
+                            "that this is the same cloth." % (100 * g["spacing_ratio"]))
+        res = {"n_motifs": g["n_motifs"], "regular": g["regular"], "gaps": g["gaps"], "warnings": warnings,
+               "compare": None, "t": int(time.time()), "note": ""}
+        PSTATE["gaps_png"] = _png(_fit(_draw_gaps(img, g["gaps"])))
+        refs = [cv2.imread(str(p)) for p in fpat.list_refs(fab())]
+        if request.form.get("compare") and refs:
+            cmp = fpat.compare_to_reference(img, refs, ppm)
+            res["compare"] = {"matched": cmp["matched"], "inliers": cmp["inliers"], "checked": cmp["checked"],
+                              "diffs": len(cmp["diffs"]), "index": cmp["ref_index"] or 0}
+            if cmp["matched"]:
+                PSTATE["compare_png"] = _png(_draw_compare(cmp))
+        res["review"] = bool(g["gaps"]) or bool(res["compare"] and res["compare"]["diffs"])
+        res["note"] = ("Measured on our pattern cloth with made-up defects; see README." if res["review"] else
+                       "A clean result does not prove the cloth is perfect: wrong-type or flipped motifs are not checked.")
+        res["ms"] = int((time.perf_counter() - t0) * 1000)
+        PSTATE["result"] = res
+    except Exception as e:
+        PSTATE["error"] = str(e)
+    return redirect(url_for("pattern_page"))
+
+
+@app.get("/pattern/img/<name>")
+def pattern_img(name):
+    data = PSTATE.get("gaps_png" if name == "gaps" else "compare_png")
+    if not data:
+        return ("", 404)
+    resp = Response(data, mimetype="image/png")
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
 @app.get("/image")

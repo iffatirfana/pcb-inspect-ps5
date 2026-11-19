@@ -96,3 +96,128 @@ def test_device_usage_accumulates(client):
     sid = fpipe.usage_start()
     fpipe.usage_tick(sid, 3600)
     assert fpipe.usage_total_seconds() >= 3600
+
+
+def test_why_verdict_id_and_ai_badge(client, monkeypatch):
+    big = {"type": "Hole", "confidence": 0.88, "box": (900, 500, 1100, 700), "polygon": None}
+    html = post(client, monkeypatch, [big]).get_data(as_text=True)
+    assert "Why this verdict" in html and "REJECT because" in html
+    assert "Inspection #" in html and "AI verdict" in html
+    assert "How the quality score and grade are worked out" in html and "Grade A = 90 or more" in html
+    assert "Hole" in html and "W &times; H (mm)" in html and "Hole ×1" in html
+
+
+def test_operator_confirmation_shown(client, monkeypatch):
+    post(client, monkeypatch, [])
+    html = client.post("/label", data={"kind": "correct"}, follow_redirects=True).get_data(as_text=True)
+    assert "Operator confirmed" in html and "AI verdict" not in html
+    html = client.post("/label", data={"kind": "wrong", "corrected": "REWORK"}, follow_redirects=True).get_data(as_text=True)
+    assert "Operator changed to REWORK" in html
+
+
+def test_model_and_frame_info_shown(client, monkeypatch):
+    html = post(client, monkeypatch, []).get_data(as_text=True)
+    assert "best_a2.onnx" in html and "Camera frame" in html and "1920 &times; 1080" in html
+
+
+# ---------------------------------------------------------------- live camera and pattern page
+
+class FakeCap:
+    def __init__(self):
+        self.n = 0
+        self.released = False
+
+    def isOpened(self):
+        return True
+
+    def read(self):
+        self.n += 1
+        img = np.full((540, 960, 3), 128, np.uint8)
+        cv2.putText(img, str(self.n), (50, 100), cv2.FONT_HERSHEY_SIMPLEX, 2, (255, 255, 255), 3)
+        return True, img
+
+    def release(self):
+        self.released = True
+
+
+def test_live_view_start_capture_stop(client, monkeypatch):
+    from ui.live_camera import LiveCamera
+    cap = FakeCap()
+    live = LiveCamera(opener=lambda i: cap, fps=100)
+    monkeypatch.setattr(fabric_app, "LIVE", live)
+    assert "Start live view" in client.get("/").get_data(as_text=True)
+    html = client.post("/live/start", follow_redirects=True).get_data(as_text=True)
+    assert "Capture &amp; inspect this frame" in html and "/live.mjpg" in html
+    monkeypatch.setattr(fpipe, "get_detector", lambda fabric: FakeDet([]))
+    html = client.post("/inspect", data={"source": "live"}, follow_redirects=True).get_data(as_text=True)
+    assert "PASS" in html or "REVIEW" in html or "INVALID" in html
+    first = next(live.mjpeg())
+    assert first.startswith(b"--frame") and b"image/jpeg" in first
+    client.post("/live/stop")
+    assert not live.running and cap.released
+
+
+def test_live_capture_without_live_view_shows_message(client, monkeypatch):
+    from ui.live_camera import LiveCamera
+    monkeypatch.setattr(fabric_app, "LIVE", LiveCamera(opener=lambda i: FakeCap()))
+    html = client.post("/inspect", data={"source": "live"}, follow_redirects=True).get_data(as_text=True)
+    assert "Start the live view" in html
+
+
+def test_live_camera_not_found(client, monkeypatch):
+    from ui.live_camera import LiveCamera
+
+    class NoCam:
+        def isOpened(self):
+            return False
+
+        def release(self):
+            pass
+    monkeypatch.setattr(fabric_app, "LIVE", LiveCamera(opener=lambda i: NoCam()))
+    html = client.post("/live/start", follow_redirects=True).get_data(as_text=True)
+    assert "Camera not found" in html
+
+
+def grid_png(missing=()):
+    img = np.full((1326, 1740, 3), 225, np.uint8)
+    for r in range(6):
+        for c in range(8):
+            if (r, c) in missing:
+                continue
+            cv2.circle(img, (130 + c * 210, 130 + r * 210), 70, (60, 60, 120), -1)
+    return cv2.imencode(".png", img)[1].tobytes()
+
+
+def test_pattern_page_refs_and_check(client, monkeypatch, tmp_path):
+    import fabric_pattern as fpat
+    monkeypatch.setattr(fpat, "REF_DIR", tmp_path / "refs")
+    html = client.get("/pattern").get_data(as_text=True)
+    assert "Reference photos" in html and "Add reference photos" in html
+    for _ in range(2):
+        client.post("/pattern/refs", data={"action": "add", "refs": (__import__("io").BytesIO(grid_png()), "a.png")},
+                    content_type="multipart/form-data")
+    html = client.get("/pattern").get_data(as_text=True)
+    assert "ref_01.png" in html and "ref_02.png" in html and "Learned from 2 photo(s)" in html
+    assert client.get("/pattern/ref/ref_01.png").mimetype == "image/jpeg"
+    r = client.post("/pattern/check", data={"source": "upload", "compare": "1",
+                    "photo": (__import__("io").BytesIO(grid_png(missing={(2, 3)})), "t.png")},
+                    content_type="multipart/form-data", follow_redirects=True)
+    html = r.get_data(as_text=True)
+    assert "1 place(s) where a motif seems to be missing" in html and "REVIEW: look at the marked spots" in html
+    assert "Comparison with reference photo" in html
+    assert client.get("/pattern/img/gaps").mimetype == "image/png"
+    r = client.post("/pattern/check", data={"source": "upload", "photo": (__import__("io").BytesIO(grid_png()), "g.png")},
+                    content_type="multipart/form-data", follow_redirects=True)
+    assert "No missing motif found" in r.get_data(as_text=True)
+    client.post("/pattern/refs", data={"action": "delete", "name": "ref_01.png"})
+    assert "ref_01.png" not in client.get("/pattern").get_data(as_text=True)
+
+
+def test_pattern_page_no_file(client):
+    html = client.post("/pattern/check", data={"source": "upload"}, follow_redirects=True).get_data(as_text=True)
+    assert "Choose a photo first" in html
+
+
+def test_fabric_selector(client):
+    html = client.get("/").get_data(as_text=True)
+    assert "<select name=\"fabric\"" in html and "Pattern check" in html

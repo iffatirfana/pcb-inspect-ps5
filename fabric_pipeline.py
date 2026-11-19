@@ -194,6 +194,7 @@ def inspect(fabric=None, image=None, scorer=None, detector=None, anomaly_scorer=
     img = image if image is not None else capture();            lap("capture")
     ok, reasons, rec["quality"] = check_capture(img, {**(CFG.get("quality") or {}), **(FAB.get("quality") or {})});  lap("quality")
     if ok:
+        rec["input_size"] = [int(img.shape[1]), int(img.shape[0])]     # camera frame, before straightening
         img = fcal.apply(img, c)                       # straighten a tilted camera, if calibrated
         img = fp.crop_image(img, c.get("crop"))
         hm_overlay = None
@@ -214,7 +215,8 @@ def inspect(fabric=None, image=None, scorer=None, detector=None, anomaly_scorer=
         rec["uncalibrated"] = not c.get("calibrated", True)
         pat = []
         if (c.get("pattern") or {}).get("enabled"):         # repeating-print cloth: missing-motif hint
-            info, pat = fabric_pattern.pattern_findings(img, c["px_per_mm"], fp.zone_3x3);   lap("pattern")
+            info, pat = fabric_pattern.pattern_findings(img, c["px_per_mm"], fp.zone_3x3,
+                                                         fabric_pattern.load_profile(fabric, c["px_per_mm"]));   lap("pattern")
             rec["pattern"] = {"n_motifs": info["n_motifs"], "regular": info["regular"], "gaps": len(pat)}
         rec["findings"] = findings + pat
         rec["verdict"] = ("REVIEW" if rec.get("anomaly", {}).get("flagged")          # anomaly-only: never above REVIEW
@@ -238,13 +240,37 @@ _COL = {"Low": (0, 200, 0), "Medium": (0, 140, 255), "High": (0, 0, 255)}
 
 
 def _draw(img, findings, ppm, path="results/last_fabric.png"):
+    """Boxes with a label (type, severity, size, confidence, zone) on a dark tag so it stays readable.
+    Pattern gaps are drawn as a circle. The text scales with the picture so it is legible when shown wide."""
     out = img.copy()
-    for f in findings:
+    H, W = out.shape[:2]
+    sc = max(0.7, W / 1500.0)
+    th = max(2, int(round(W / 600.0)))
+    for n, f in enumerate(findings, 1):
+        col = _COL[f["severity"]]
         cx, cy = int(f["x_mm"] * ppm), int(f["y_mm"] * ppm)
-        hw, hh = int(f["width_mm"] * ppm / 2) + 6, int(f["height_mm"] * ppm / 2) + 6
-        cv2.rectangle(out, (cx - hw, cy - hh), (cx + hw, cy + hh), _COL[f["severity"]], 2)
-        cv2.putText(out, f"{f.get('type', '')} {f['severity']} {'wide' if f.get('wide') else str(f['area_mm2']) + 'mm2'}".strip(), (cx - hw, max(14, cy - hh - 6)),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, _COL[f["severity"]], 1, cv2.LINE_AA)
+        parts = ["#%d %s" % (n, f.get("type", "Defect")), f["severity"]]
+        if f.get("wide"):
+            parts.append("wide")
+        elif f.get("area_mm2"):
+            parts.append("%.1f mm2" % f["area_mm2"])
+        if f.get("confidence") is not None:
+            parts.append("%d%%" % round(100 * f["confidence"]))
+        parts.append(f.get("zone", ""))
+        label = " | ".join(p for p in parts if p)
+        if f.get("type") == "Pattern gap":
+            r = max(30, int(0.04 * W))
+            cv2.circle(out, (cx, cy), r, col, th)
+            x0, y0 = cx - r, cy - r
+        else:
+            hw, hh = int(f["width_mm"] * ppm / 2) + 8, int(f["height_mm"] * ppm / 2) + 8
+            cv2.rectangle(out, (cx - hw, cy - hh), (cx + hw, cy + hh), col, th)
+            x0, y0 = cx - hw, cy - hh
+        (tw, tht), base = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.7 * sc, 2)
+        tx = int(min(max(0, x0), max(0, W - tw - 8)))
+        ty = int(y0 - 6) if y0 - tht - 12 > 0 else int(y0 + tht + 14)
+        cv2.rectangle(out, (tx, ty - tht - 6), (tx + tw + 8, ty + base + 2), (20, 20, 20), -1)
+        cv2.putText(out, label, (tx + 4, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.7 * sc, col, 2, cv2.LINE_AA)
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     cv2.imwrite(path, out)
     return path
