@@ -23,6 +23,20 @@ fabrics:
       bank: models/anomaly/bank_blue_trainonly.npy
       pixel_threshold: 2.463  # heatmap value above which a pixel counts as abnormal
       image_fraction: 0.015   # flag the photo when more than 1.5% of its pixels are abnormal
+  pattern:                    # cream cloth with a repeating brown print; same camera as blue
+    detector: yolo
+    yolo_model: models/best_a2.onnx
+    yolo_conf: 0.5
+    yolo_imgsz: 960
+    px_per_mm: 5.0            # same camera set-up as blue (kb/calibration.json); redo if the camera or lamp moves
+    calibrated: true
+    crop: null
+    # Missing-motif hint (REVIEW-only, fabric_pattern.py): on 30 synthetic missing motifs it found 27;
+    # on 14 clean photos not used to build it, 1 was flagged. Wrong-type or flipped motifs are not detected.
+    pattern:
+      enabled: true
+    anomaly:
+      enabled: false          # the memory bank was built from blue cloth only
   white:
     px_per_mm: 8.0            # TUNE: from the ruler photo (px_per_mm_from_ruler)
     crop: null                # TUNE: [x, y, w, h] in camera pixels, or null for full frame

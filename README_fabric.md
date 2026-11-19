@@ -48,6 +48,23 @@ The memory bank was built from the 51 train photos only. The pixel threshold was
 
 These are small sets from one fabric and one camera setup, so they show the idea works but are not an accuracy claim. On the Pi the anomaly step took about 0.76 s on a clean photo (full clean-photo run 1.11 s). Full pipeline, fresh process: hole photo REJECT with model-written advice in 5.09 s including model load; two consecutive requests to the persistent runner ran without reload.
 
+## Pattern cloth: missing-motif check
+
+`fabric_pattern.py` looks for a missing printed motif on repeating-print cloth (fabric key `pattern`). It finds the
+print grid in one photo and flags a position that has a motif on both sides but almost no printed ink.
+It needs no reference photo and never gives more than REVIEW.
+
+| Test | Result |
+|---|---|
+| 30 synthetic missing motifs (made from normal photos) | 27 found at the right place |
+| 14 clean photos not used to build the rule | 1 flagged (1 false gap) |
+
+Limits: the missing motifs are synthetic and the clean photos show only a few cloth positions, so treat the
+numbers as an estimate. Wrong-type or flipped motifs are not detected (the hand-printed motifs vary too much).
+It works only on a regular repeating print. A reference-photo comparison was tried first and rejected: it
+flagged 6 of 14 clean photos because the cloth layout differs between areas. A DINOv2 Siamese model from the
+team was also tested; alone it flags too many regions on clean cloth, so it is not in the pipeline.
+
 ## Limitations (read these)
 
 - The anomaly second opinion is trained on normal blue denim only and flags about 2 in 10 held-out normal photos for a quick manual check. It is advisory: it can raise PASS to REVIEW and nothing more.
