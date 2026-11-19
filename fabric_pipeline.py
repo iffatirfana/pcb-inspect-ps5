@@ -20,6 +20,7 @@ import yaml
 import fabric_calib as fcal
 import fabric_profile as fp
 from fabric_quality import cloth_quality
+import fabric_pattern
 from fabric_advisor import FabricAdvisor, FabricMockBackend, build_user_message
 from vision.quality import check_capture
 
@@ -211,14 +212,20 @@ def inspect(fabric=None, image=None, scorer=None, detector=None, anomaly_scorer=
             hm = (scorer or get_scorer(fabric)).heatmap(img);   lap("heatmap")
             findings = fp.findings_from_heatmap(hm, c["threshold"], c["px_per_mm"], rules)
         rec["uncalibrated"] = not c.get("calibrated", True)
-        rec["findings"] = findings
+        pat = []
+        if (c.get("pattern") or {}).get("enabled"):         # repeating-print cloth: missing-motif hint
+            info, pat = fabric_pattern.pattern_findings(img, c["px_per_mm"], fp.zone_3x3);   lap("pattern")
+            rec["pattern"] = {"n_motifs": info["n_motifs"], "regular": info["regular"], "gaps": len(pat)}
+        rec["findings"] = findings + pat
         rec["verdict"] = ("REVIEW" if rec.get("anomaly", {}).get("flagged")          # anomaly-only: never above REVIEW
                           else fp.verdict_from_findings(findings, rules));  lap("rules")
+        if pat and rec["verdict"] == "PASS":                # pattern gaps alone: REVIEW, never REWORK/REJECT
+            rec["verdict"] = "REVIEW"
         rec["image"] = _draw(img, findings, c["px_per_mm"])
         if hm_overlay and hm_overlay[0] is not None:       # picture of what the second opinion saw
             rec["heatmap_image"] = _draw_heatmap(img, *hm_overlay)
         lap("draw")
-        rec["cloth_quality"] = cloth_quality(findings, rec["verdict"], rec.get("anomaly"))
+        rec["cloth_quality"] = cloth_quality(rec["findings"], rec["verdict"], rec.get("anomaly"))
     else:
         rec["verdict"], rec["invalid_reasons"] = INVALID, reasons
     timings["to_verdict"] = round(sum(timings.values()), 2)
