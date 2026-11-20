@@ -13,6 +13,7 @@ Weights trained with ultralytics (AGPL-3.0) on a public denim dataset (CC BY 4.0
 credit both in the report.
 """
 import ast
+import os
 
 import cv2
 import numpy as np
@@ -29,6 +30,8 @@ class YoloDetector:
         if self.model_path.lower().endswith(".onnx"):
             import onnxruntime as ort
             opts = ort.SessionOptions()
+            if os.environ.get("FABRIC_ORT_THREADS"):                 # set by tools/pi_benchmark.py
+                opts.intra_op_num_threads = int(os.environ["FABRIC_ORT_THREADS"])
             self._sess = ort.InferenceSession(self.model_path, opts,
                                               providers=["CPUExecutionProvider"])
             shape = self._sess.get_inputs()[0].shape            # [1, 3, H, W] or dynamic

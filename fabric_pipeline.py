@@ -143,7 +143,7 @@ REPORT_DIR = Path("results/reports")
 
 def log(rec):
     con = _db()
-    extra = {k: rec.get(k) for k in ("crop", "input_size", "anomaly", "pattern", "invalid_reasons", "uncalibrated")
+    extra = {k: rec.get(k) for k in ("crop", "input_size", "anomaly", "pattern", "invalid_reasons", "uncalibrated", "calibration_applied")
              if rec.get(k) not in (None, [], {})}
     cur = con.execute("INSERT INTO fabric_inspections(ts,fabric,verdict,findings,advice,timings,quality,extra) "
                       "VALUES (?,?,?,?,?,?,?,?)",
@@ -194,9 +194,11 @@ def usage_total_seconds():
     return float(total)
 
 
-def inspect(fabric=None, image=None, scorer=None, detector=None, anomaly_scorer=None, crop_frac=None):
+def inspect(fabric=None, image=None, scorer=None, detector=None, anomaly_scorer=None, crop_frac=None, calibrate=True):
     """Everything up to the verdict. Returns the record (already logged).
-    Fabrics with detector: yolo use the YOLO model; others use the anomaly heatmap."""
+    Fabrics with detector: yolo use the YOLO model; others use the anomaly heatmap.
+    calibrate=False skips the straightening step: for uploaded photos, which were not taken by the calibrated
+    camera. Sizes in mm are then estimates."""
     fabric = fabric or FAB["fabric"]
     c, rules = FAB["fabrics"][fabric], FAB["rules"]
     t, timings = time.perf_counter(), {}
@@ -211,7 +213,8 @@ def inspect(fabric=None, image=None, scorer=None, detector=None, anomaly_scorer=
     ok, reasons, rec["quality"] = check_capture(img, {**(CFG.get("quality") or {}), **(FAB.get("quality") or {})});  lap("quality")
     if ok:
         rec["input_size"] = [int(img.shape[1]), int(img.shape[0])]     # camera frame, before straightening
-        img = fcal.apply(img, c)                       # straighten a tilted camera, if calibrated
+        if calibrate:
+            img = fcal.apply(img, c)                   # straighten a tilted camera, if calibrated
         img = fp.crop_image(img, c.get("crop"))
         if crop_frac:                                   # operator-drawn rectangle for this photo only
             img, rec["crop"] = _crop_by_fraction(img, crop_frac)
@@ -230,7 +233,8 @@ def inspect(fabric=None, image=None, scorer=None, detector=None, anomaly_scorer=
         else:
             hm = (scorer or get_scorer(fabric)).heatmap(img);   lap("heatmap")
             findings = fp.findings_from_heatmap(hm, c["threshold"], c["px_per_mm"], rules)
-        rec["uncalibrated"] = not c.get("calibrated", True)
+        rec["uncalibrated"] = (not calibrate) or (not c.get("calibrated", True))
+        rec["calibration_applied"] = bool(calibrate)
         pat = []
         if (c.get("pattern") or {}).get("enabled"):         # repeating-print cloth: missing-motif hint
             info, pat = fabric_pattern.pattern_findings(img, c["px_per_mm"], fp.zone_3x3,
@@ -379,7 +383,7 @@ def advise(rec, advisor=None, backend_name="mock"):
 
 def run_once(fabric=None, image_path=None, verbose=True):
     img = cv2.imread(image_path) if image_path else None
-    rec = inspect(fabric, img)
+    rec = inspect(fabric, img, calibrate=image_path is None)      # a file on disk is not straightened
     advise(rec)
     if verbose:
         print(json.dumps({"findings": rec["findings"], "advice": rec["advice"]}, indent=2))

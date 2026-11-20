@@ -43,7 +43,7 @@ def test_hole_page(client, monkeypatch):
     html = r.get_data(as_text=True)
     assert r.status_code == 200
     assert "REJECT" in html and "Recommended action" in html and "Hole" in html
-    assert "not calibrated" not in html
+    assert "uploaded photo, not straightened" in html
 
 
 def test_pass_page(client, monkeypatch):
@@ -254,8 +254,7 @@ def test_inspect_selected_area_uses_only_that_rectangle(client, monkeypatch):
     assert rec["crop"]["frac"] == [0.1, 0.2, 0.5, 0.6] and rec["crop"]["small"] is False
     assert "Area inspected" in html and fabric_app.STATE["pending"] is None
     w, h = rec["crop"]["size"]
-    ws = fpipe.FAB["fabrics"]["blue"]["warp_size"]
-    assert (w, h) == (round(0.5 * ws[0]), round(0.6 * ws[1]))
+    assert (w, h) == (round(0.5 * 1920), round(0.6 * 1080))        # uploaded photo: not straightened, original size
 
 
 def test_each_photo_needs_its_own_rectangle(client, monkeypatch):
@@ -286,3 +285,12 @@ def test_report_from_log_has_summary_for_each_defect(client, monkeypatch, tmp_pa
     assert client.get(f"/report/{rid}/picture.png").mimetype == "image/png"
     assert client.get("/report/99999").status_code == 404
     assert str(rid) in client.get("/log").get_data(as_text=True)
+
+
+def test_uploaded_photo_is_not_straightened_but_camera_photo_is(client, monkeypatch):
+    monkeypatch.setattr(fpipe, "get_detector", lambda fabric: FakeDet([]))
+    client.post("/inspect", data={"source": "upload", "photo": (__import__("io").BytesIO(photo()), "a.png")})
+    assert fabric_app.STATE["rec"]["calibration_applied"] is False
+    monkeypatch.setattr(fabric_app, "grab_camera", lambda i: cv2.imdecode(np.frombuffer(photo(), np.uint8), 1))
+    client.post("/inspect", data={"source": "camera"})
+    assert fabric_app.STATE["rec"]["calibration_applied"] is True

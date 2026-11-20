@@ -31,7 +31,11 @@ def gray_world(bgr, target_mean=128.0):
 class FabricScorer:
     def __init__(self, onnx_path, bank_path, work_size=(512, 512), blur_ksize=15):
         import onnxruntime as ort          # imported here so tests can run without it
-        self.sess = ort.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"])
+        import os
+        opts = ort.SessionOptions()
+        if os.environ.get("FABRIC_ORT_THREADS"):                      # set by tools/pi_benchmark.py
+            opts.intra_op_num_threads = int(os.environ["FABRIC_ORT_THREADS"])
+        self.sess = ort.InferenceSession(str(onnx_path), opts, providers=["CPUExecutionProvider"])
         self.inp = self.sess.get_inputs()[0].name
         self.bank = np.load(bank_path).astype(np.float32)
         self.bank_sq = (self.bank ** 2).sum(1)

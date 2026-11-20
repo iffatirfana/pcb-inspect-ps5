@@ -134,7 +134,7 @@ PAGE = """<!doctype html><html><head><meta charset="utf-8">
     the photo when more than {{ (r.anomaly.limit * 100)|round(1) }}% of it is unusual; this photo: {{ (r.anomaly.fraction * 100)|round(1) }}%.</p></div>{% endif %}
   <div class="card"><h3>Fabric and measurement</h3><div class="kv">
    <b>Fabric</b><span>{{ fabric }}</span>
-   <b>Scale</b><span>{{ ppm }} px/mm &middot; {% if r.uncalibrated %}not calibrated{% else %}calibrated (ruler photo){% endif %}</span>
+   <b>Scale</b><span>{{ ppm }} px/mm &middot; {% if r.calibration_applied is defined and not r.calibration_applied %}uploaded photo, not straightened: sizes are estimates{% elif r.uncalibrated %}not calibrated{% else %}calibrated (ruler photo){% endif %}</span>
    <b>Camera frame</b><span>{% if r.input_size %}{{ r.input_size[0] }} &times; {{ r.input_size[1] }} px{% else %}-{% endif %}</span>
    <b>Area inspected</b><span>{% if r.crop %}{{ r.crop.size[0] }} &times; {{ r.crop.size[1] }} px, at x {{ r.crop.px[0] }}, y {{ r.crop.px[1] }}{% if r.crop.small %} (small area){% else %}{% endif %}{% else %}whole photo{% endif %}</span>
    <b>Model</b><span>{{ info.model }} &middot; confidence &ge; {{ info.conf }}</span>
@@ -346,9 +346,14 @@ def _read_source():
     return img
 
 
-def _run_inspection(img, crop_frac=None):
+def _from_camera():
+    """Only pictures taken by the calibrated camera are straightened; uploaded photos are used as they are."""
+    return request.form.get("source") == "live" or request.form.get("source") == "camera"
+
+
+def _run_inspection(img, crop_frac=None, calibrate=True):
     with LOCK:
-        rec = fpipe.inspect(fab(), img, crop_frac=crop_frac)
+        rec = fpipe.inspect(fab(), img, crop_frac=crop_frac, calibrate=calibrate)
         fpipe.advise(rec)
     if STATE["guidance"] is None:
         STATE["guidance"] = fa.load_guidance()
@@ -366,16 +371,17 @@ def _run_inspection(img, crop_frac=None):
 def do_inspect():
     STATE["error"] = None
     try:
-        _run_inspection(_read_source())
+        _run_inspection(_read_source(), calibrate=_from_camera())
     except Exception as e:               # show the problem on the page instead of a 500
         STATE["error"] = str(e)
     return redirect(url_for("index"))
 
 
 def _preview(img):
-    """The picture the rectangle is drawn on: straightened and cut like the pipeline does, before the operator's crop."""
+    """The picture the rectangle is drawn on: straightened (camera pictures only) and cut like the pipeline does,
+    before the operator's crop."""
     c = fpipe.FAB["fabrics"][fab()]
-    return fpipe.fp.crop_image(fcal.apply(img, c), c.get("crop"))
+    return fpipe.fp.crop_image(fcal.apply(img, c) if STATE.get("pending_cal", True) else img, c.get("crop"))
 
 
 @app.post("/select")
@@ -384,6 +390,7 @@ def select_area():
     STATE["error"] = None
     try:
         STATE["pending"] = _read_source()
+        STATE["pending_cal"] = _from_camera()
     except Exception as e:
         STATE["error"] = str(e)
         return redirect(url_for("index"))
@@ -412,7 +419,7 @@ def inspect_area():
             if not all(vals):
                 raise ValueError("Draw a rectangle on the photo first, or press Inspect whole photo.")
             frac = tuple(float(v) for v in vals)
-        _run_inspection(img, frac)
+        _run_inspection(img, frac, calibrate=STATE.get("pending_cal", True))
         STATE["pending"] = None
     except Exception as e:
         STATE["error"] = str(e)
@@ -602,7 +609,7 @@ button{background:#444;color:#fff;border:0;border-radius:6px;padding:8px 14px;cu
  <ol>{% for x in d.advice.actions %}<li>{{ x }}</li>{% endfor %}</ol>{% if d.advice.risk %}<p><b>Risk:</b> {{ d.advice.risk }}</p>{% endif %}
  {% if d.advice.summary %}<p class="mut">{{ d.advice.summary }}</p>{% endif %}</div>{% endif %}
 <div class="card"><h3>Measurement and timing</h3><div class="kv">
- <b>Scale</b><span>{{ ppm }} px/mm</span>
+ <b>Scale</b><span>{{ ppm }} px/mm{% if ex.calibration_applied is defined and not ex.calibration_applied %} (uploaded photo, not straightened: sizes are estimates){% endif %}</span>
  <b>Camera frame</b><span>{% if ex.input_size %}{{ ex.input_size[0] }} &times; {{ ex.input_size[1] }} px{% else %}-{% endif %}</span>
  <b>Area inspected</b><span>{% if ex.crop %}{{ ex.crop.size[0] }} &times; {{ ex.crop.size[1] }} px at x {{ ex.crop.px[0] }}, y {{ ex.crop.px[1] }}{% else %}whole photo{% endif %}</span>
  <b>Detection</b><span>{{ d.timings.get('detect', '-') }} ms</span><b>Advice</b><span>{{ d.timings.get('llm', '-') }} ms</span>
