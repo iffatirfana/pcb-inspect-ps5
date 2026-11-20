@@ -7,6 +7,7 @@ Run:  python fabric_pipeline.py <fabric> [image.png]     (fabric: blue | white |
 """
 import json
 import os
+import shutil
 import sqlite3
 import sys
 import time
@@ -128,7 +129,7 @@ def _db():
     con.execute("""CREATE TABLE IF NOT EXISTS fabric_inspections(
         ts TEXT, fabric TEXT, verdict TEXT, findings TEXT, advice TEXT, timings TEXT,
         operator_label TEXT)""")
-    for col in ("reason", "note", "corrected", "quality"):      # added later: safe on old databases
+    for col in ("reason", "note", "corrected", "quality", "extra"):      # added later: safe on old databases
         try:
             con.execute("ALTER TABLE fabric_inspections ADD COLUMN %s TEXT" % col)
         except sqlite3.OperationalError:
@@ -137,15 +138,30 @@ def _db():
     return con
 
 
+REPORT_DIR = Path("results/reports")
+
+
 def log(rec):
     con = _db()
-    cur = con.execute("INSERT INTO fabric_inspections(ts,fabric,verdict,findings,advice,timings,quality) "
-                      "VALUES (?,?,?,?,?,?,?)",
+    extra = {k: rec.get(k) for k in ("crop", "input_size", "anomaly", "pattern", "invalid_reasons", "uncalibrated")
+             if rec.get(k) not in (None, [], {})}
+    cur = con.execute("INSERT INTO fabric_inspections(ts,fabric,verdict,findings,advice,timings,quality,extra) "
+                      "VALUES (?,?,?,?,?,?,?,?)",
                       (rec["ts"], rec["fabric"], rec["verdict"], json.dumps(rec["findings"]),
                        json.dumps(rec.get("advice")), json.dumps(rec["timings"]),
-                       (rec.get("cloth_quality") or {}).get("score")))
+                       (rec.get("cloth_quality") or {}).get("score"), json.dumps(extra)))
     con.commit(); rid = cur.lastrowid; con.close()
+    _keep_pictures(rec, rid)
     return rid
+
+
+def _keep_pictures(rec, rid):
+    """last_fabric.png is overwritten by every inspection, so keep a copy per inspection for its report."""
+    REPORT_DIR.mkdir(parents=True, exist_ok=True)
+    for key, suffix in (("image", ""), ("heatmap_image", "_heatmap")):
+        src = rec.get(key)
+        if src and Path(src).exists():
+            shutil.copyfile(src, REPORT_DIR / ("%d%s.png" % (rid, suffix)))
 
 
 def operator_label(inspection_id, label, reason=None, note=None, corrected=None):

@@ -242,7 +242,7 @@ def _select(client, monkeypatch):
 
 def test_select_page_shows_photo_and_rectangle_tool(client, monkeypatch):
     html = _select(client, monkeypatch).get_data(as_text=True)
-    assert "Select the area to inspect" in html and "Inspect whole photo" in html
+    assert "Crop an area" in html and "Inspect full photo" in html and "Inspect this part" in html
     assert client.get("/select/img").mimetype == "image/jpeg"
 
 

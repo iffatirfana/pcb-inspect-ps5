@@ -151,7 +151,7 @@ PAGE = """<!doctype html><html><head><meta charset="utf-8">
  </div>
  <div>
   {% for n in (a.notes if a else []) %}<div class="warn">{{ n }}</div>{% endfor %}
-  <div class="card"><h3>Recommended action <span class="tag">from rules</span></h3>
+  <div class="card"><h3>Recommended action</h3>
    {% if a and a['items'] %}{% for i in a['items'] %}
    <div class="kv" style="margin-bottom:10px">
     <b>Defect</b><span>{{ i.type }} &middot; <span class="{{ i.severity }}">{{ i.severity }}</span> &middot; {{ i.zone }}</span>
@@ -422,31 +422,50 @@ def inspect_area():
 SELECT_PAGE = """<!doctype html><html><head><meta charset="utf-8"><title>Select area</title>
 <style>body{background:#111;color:#eee;font-family:system-ui,Segoe UI,Arial;margin:0;padding:16px}
 .btn,button{background:#2e7d32;color:#fff;border:0;border-radius:6px;padding:10px 16px;font-size:15px;cursor:pointer}
-.alt{background:#444}#wrap{position:relative;display:inline-block;touch-action:none;user-select:none}
-#img{display:block;max-width:100%;height:auto;max-height:78vh}
+button:disabled{background:#333;color:#888;cursor:not-allowed}.alt{background:#444}
+#wrap{position:relative;display:inline-block;touch-action:none;user-select:none}
+#img{display:block;max-width:100%;height:auto;max-height:70vh;pointer-events:none;-webkit-user-drag:none;user-select:none}#cv{max-width:100%;max-height:70vh;border:2px solid #ffd54f}
 #box{position:absolute;border:2px solid #ffd54f;background:rgba(255,213,79,.15);display:none;pointer-events:none}
-.mut{color:#aaa;font-size:13px}</style></head><body>
-<h2>Select the area to inspect &middot; {{ fabric }}</h2>
-<p class="mut">Drag a rectangle on the photo. Each photo has its own area; nothing is remembered for the next one.</p>
-<div id="wrap"><img id="img" src="{{ url_for('select_img') }}?t={{ t }}" alt="photo"><div id="box"></div></div>
-<form method="post" action="{{ url_for('inspect_area') }}" style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+.mut{color:#aaa;font-size:13px}.bar{margin:0 0 12px;display:flex;gap:8px;flex-wrap:wrap;align-items:center}</style></head><body>
+<h2>Inspect &middot; {{ fabric }}</h2>
+<p id="msg" class="mut">Step 1 of 3: choose how to inspect this photo.</p>
+<form method="post" action="{{ url_for('inspect_area') }}">
  <input type="hidden" name="fx"><input type="hidden" name="fy"><input type="hidden" name="fw"><input type="hidden" name="fh">
- <button id="go" disabled>Inspect selected area</button>
- <button class="alt" name="whole" value="1">Inspect whole photo</button>
- <a class="btn alt" href="{{ url_for('index') }}" style="text-decoration:none">Cancel</a>
- <span id="info" class="mut">Photo {{ w }} &times; {{ h }} px</span></form>
+ <div class="bar" id="s1"><button type="button" id="bcrop">Crop an area</button>
+  <button class="alt" name="whole" value="1">Inspect full photo</button>
+  <a class="btn alt" href="{{ url_for('index') }}" style="text-decoration:none">Cancel</a>
+  <span class="mut">Photo {{ w }} &times; {{ h }} px</span></div>
+ <div class="bar" id="s2" style="display:none"><button type="button" id="bdone" disabled>Crop</button>
+  <button type="button" class="alt" id="bback">Back</button><span id="info" class="mut">Drag a rectangle on the photo.</span></div>
+ <div class="bar" id="s3" style="display:none"><button id="bgo">Inspect this part</button>
+  <button type="button" class="alt" id="bredo">Crop again</button><span id="info3" class="mut"></span></div>
+</form>
+<div id="wrap"><img id="img" draggable="false" src="{{ url_for('select_img') }}?t={{ t }}" alt="photo"><div id="box"></div></div>
+<canvas id="cv" style="display:none"></canvas>
+
 <script>
-const img=document.getElementById('img'),box=document.getElementById('box'),wrap=document.getElementById('wrap'),go=document.getElementById('go'),info=document.getElementById('info');
-const f=n=>document.getElementsByName(n)[0];let s=null;
+const $=id=>document.getElementById(id),img=$('img'),box=$('box'),wrap=$('wrap'),cv=$('cv'),msg=$('msg');
+const f=n=>document.getElementsByName(n)[0],W={{ w }},H={{ h }};let mode='choose',s=null,ok=false;
+function show(m){mode=m;$('s1').style.display=m=='choose'?'flex':'none';$('s2').style.display=m=='draw'?'flex':'none';
+ $('s3').style.display=m=='preview'?'flex':'none';wrap.style.display=m=='preview'?'none':'inline-block';cv.style.display=m=='preview'?'block':'none';
+ box.style.display=(m=='draw'&&s!==null||m=='draw'&&ok)?'block':'none';
+ msg.textContent={choose:'Step 1 of 3: choose how to inspect this photo.',draw:'Step 2 of 3: drag a rectangle over the part to check. It is cropped as soon as you let go.',
+  preview:'Step 3 of 3: this is the cropped part. Press Inspect this part, or crop again.'}[m]}
 function pt(e){const r=img.getBoundingClientRect();return[Math.min(r.width,Math.max(0,e.clientX-r.left)),Math.min(r.height,Math.max(0,e.clientY-r.top)),r]}
-wrap.addEventListener('pointerdown',e=>{const[x,y]=pt(e);s=[x,y];wrap.setPointerCapture(e.pointerId);box.style.display='block';draw(x,y)});
-wrap.addEventListener('pointermove',e=>{if(s){const[x,y]=pt(e);draw(x,y)}});
-wrap.addEventListener('pointerup',e=>{s=null});
-function draw(x,y){const[r0,r1,r]=pt({clientX:0,clientY:0});const l=Math.min(s[0],x),t=Math.min(s[1],y),w=Math.abs(x-s[0]),h=Math.abs(y-s[1]);
+$('bcrop').onclick=()=>{ok=false;box.style.display='none';$('bdone').disabled=true;$('info').textContent='Drag a rectangle on the photo.';show('draw')};
+$('bback').onclick=()=>{ok=false;box.style.display='none';show('choose')};
+$('bredo').onclick=()=>{$('bcrop').onclick()};
+wrap.addEventListener('pointerdown',e=>{if(mode!='draw')return;const[x,y]=pt(e);s=[x,y];wrap.setPointerCapture(e.pointerId);box.style.display='block';draw(x,y)});
+wrap.addEventListener('pointermove',e=>{if(s&&mode=='draw'){const[x,y]=pt(e);draw(x,y)}});
+wrap.addEventListener('pointerup',e=>{if(s&&mode=='draw'){const[x,y]=pt(e);draw(x,y);s=null;if(ok)$('bdone').onclick()}s=null});wrap.addEventListener('pointercancel',e=>{s=null});wrap.addEventListener('dragstart',e=>e.preventDefault());wrap.addEventListener('contextmenu',e=>e.preventDefault());
+function draw(x,y){const r=img.getBoundingClientRect(),l=Math.min(s[0],x),t=Math.min(s[1],y),w=Math.abs(x-s[0]),h=Math.abs(y-s[1]);
  Object.assign(box.style,{left:l+'px',top:t+'px',width:w+'px',height:h+'px'});
  f('fx').value=(l/r.width).toFixed(4);f('fy').value=(t/r.height).toFixed(4);f('fw').value=(w/r.width).toFixed(4);f('fh').value=(h/r.height).toFixed(4);
- const pw=Math.round(w/r.width*{{ w }}),ph=Math.round(h/r.height*{{ h }});go.disabled=pw<64||ph<64;
- info.textContent='Selected '+pw+' \u00d7 '+ph+' px'+((pw<{{ w }}/2||ph<{{ h }}/2)?' (small area: detection may be less reliable)':'')}
+ const pw=Math.round(w/r.width*W),ph=Math.round(h/r.height*H);ok=pw>=64&&ph>=64;$('bdone').disabled=!ok;
+ $('info').textContent='Selected '+pw+' \u00d7 '+ph+' px'+(ok?'':' (too small, minimum 64 px)')}
+$('bdone').onclick=()=>{if(!ok)return;const nw=img.naturalWidth,nh=img.naturalHeight,fx=+f('fx').value,fy=+f('fy').value,fw=+f('fw').value,fh=+f('fh').value;
+ cv.width=Math.round(fw*nw);cv.height=Math.round(fh*nh);cv.getContext('2d').drawImage(img,fx*nw,fy*nh,fw*nw,fh*nh,0,0,cv.width,cv.height);
+ const pw=Math.round(fw*W),ph=Math.round(fh*H);$('info3').textContent='Cropped part: '+pw+' \u00d7 '+ph+' px'+((pw<W/2||ph<H/2)?' (small area: detection may be less reliable)':'');show('preview')};
 </script></body></html>"""
 
 

@@ -238,3 +238,4 @@ hardware/testboard/drc_report.txt
 # inspection outputs
 results/*.png
 models/best_a2.pt
+results/reports/
