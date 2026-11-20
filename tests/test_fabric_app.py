@@ -147,7 +147,7 @@ def test_live_view_start_capture_stop(client, monkeypatch):
     monkeypatch.setattr(fabric_app, "LIVE", live)
     assert "Start live view" in client.get("/").get_data(as_text=True)
     html = client.post("/live/start", follow_redirects=True).get_data(as_text=True)
-    assert "Capture &amp; inspect this frame" in html and "/live.mjpg" in html
+    assert "Capture &amp; select area" in html and "/live.mjpg" in html
     monkeypatch.setattr(fpipe, "get_detector", lambda fabric: FakeDet([]))
     html = client.post("/inspect", data={"source": "live"}, follow_redirects=True).get_data(as_text=True)
     assert "PASS" in html or "REVIEW" in html or "INVALID" in html
@@ -233,3 +233,56 @@ def test_live_camera_black_frames_gives_clear_message(client, monkeypatch):
     monkeypatch.setattr(fabric_app, "LIVE", LiveCamera(opener=lambda i: cap))
     html = client.post("/live/start", follow_redirects=True).get_data(as_text=True)
     assert "sends a black picture" in html and cap.released
+
+
+def _select(client, monkeypatch):
+    monkeypatch.setattr(fpipe, "get_detector", lambda fabric: FakeDet([]))
+    return client.post("/select", data={"source": "upload", "photo": (__import__("io").BytesIO(photo()), "a.png")})
+
+
+def test_select_page_shows_photo_and_rectangle_tool(client, monkeypatch):
+    html = _select(client, monkeypatch).get_data(as_text=True)
+    assert "Select the area to inspect" in html and "Inspect whole photo" in html
+    assert client.get("/select/img").mimetype == "image/jpeg"
+
+
+def test_inspect_selected_area_uses_only_that_rectangle(client, monkeypatch):
+    _select(client, monkeypatch)
+    html = client.post("/inspect/area", data={"fx": "0.1", "fy": "0.2", "fw": "0.5", "fh": "0.6"},
+                       follow_redirects=True).get_data(as_text=True)
+    rec = fabric_app.STATE["rec"]
+    assert rec["crop"]["frac"] == [0.1, 0.2, 0.5, 0.6] and rec["crop"]["small"] is False
+    assert "Area inspected" in html and fabric_app.STATE["pending"] is None
+    w, h = rec["crop"]["size"]
+    ws = fpipe.FAB["fabrics"]["blue"]["warp_size"]
+    assert (w, h) == (round(0.5 * ws[0]), round(0.6 * ws[1]))
+
+
+def test_each_photo_needs_its_own_rectangle(client, monkeypatch):
+    _select(client, monkeypatch)
+    client.post("/inspect/area", data={"fx": "0.1", "fy": "0.1", "fw": "0.5", "fh": "0.5"})
+    r = client.post("/inspect/area", data={"fx": "0.1", "fy": "0.1", "fw": "0.5", "fh": "0.5"}, follow_redirects=True)
+    assert "No photo waiting" in r.get_data(as_text=True)
+
+
+def test_whole_photo_and_tiny_area(client, monkeypatch):
+    _select(client, monkeypatch)
+    client.post("/inspect/area", data={"whole": "1"})
+    assert "crop" not in fabric_app.STATE["rec"]
+    _select(client, monkeypatch)
+    r = client.post("/inspect/area", data={"fx": "0.1", "fy": "0.1", "fw": "0.001", "fh": "0.001"}, follow_redirects=True)
+    assert "too small" in r.get_data(as_text=True)
+
+
+def test_report_from_log_has_summary_for_each_defect(client, monkeypatch, tmp_path):
+    monkeypatch.setattr(fpipe, "REPORT_DIR", tmp_path / "rep")
+    big = {"type": "Hole", "confidence": 0.88, "box": (900, 500, 1100, 700), "polygon": None}
+    post(client, monkeypatch, [big])
+    rid = fabric_app.STATE["rec"]["id"]
+    assert f"/report/{rid}" in client.get("/").get_data(as_text=True)
+    html = client.get(f"/report/{rid}").get_data(as_text=True)
+    assert "Inspection report" in html and "Summary of each defect" in html
+    assert "Hole" in html and "Why this severity" in html and "REJECT" in html and "88%" in html
+    assert client.get(f"/report/{rid}/picture.png").mimetype == "image/png"
+    assert client.get("/report/99999").status_code == 404
+    assert str(rid) in client.get("/log").get_data(as_text=True)

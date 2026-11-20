@@ -28,7 +28,7 @@ from ui.live_camera import LiveCamera
 
 app = Flask(__name__)
 LOCK = threading.Lock()          # one inspection at a time; the Llama runner is not re-entrant
-STATE = {"rec": None, "action": None, "error": None, "guidance": None, "label": None, "fabric": None}
+STATE = {"pending": None, "rec": None, "action": None, "error": None, "guidance": None, "label": None, "fabric": None}
 PSTATE = {"result": None}
 FABRIC = fpipe.FAB["fabric"]
 STARTED = time.time()
@@ -82,7 +82,7 @@ PAGE = """<!doctype html><html><head><meta charset="utf-8">
  <select name="fabric" onchange="this.form.submit()" title="Fabric">{% for k in fabrics %}<option {{ 'selected' if k == fabric else '' }}>{{ k }}</option>{% endfor %}</select>
  <a class="btn alt" href="{{ url_for('pattern_page') }}" style="text-decoration:none">Pattern check</a>
 </form>
-<form class="row" method="post" action="{{ url_for('do_inspect') }}" enctype="multipart/form-data">
+<form class="row" method="post" action="{{ url_for('select_area') }}" enctype="multipart/form-data">
  <input type="file" name="photo" accept="image/*">
  <button name="source" value="upload">Inspect photo</button>
  <button name="source" value="camera" class="alt">Capture from camera</button>
@@ -101,7 +101,7 @@ PAGE = """<!doctype html><html><head><meta charset="utf-8">
  {% if live.running %}
   <img src="{{ url_for('live_stream') }}" alt="Live camera" style="max-width:760px;width:100%">
   <div class="row" style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
-   <form method="post" action="{{ url_for('do_inspect') }}"><button name="source" value="live">Capture &amp; inspect this frame</button></form>
+   <form method="post" action="{{ url_for('select_area') }}"><button name="source" value="live">Capture &amp; select area</button></form>
    <form method="post" action="{{ url_for('live_stop') }}"><button class="alt">Stop camera</button></form></div>
   <p class="mut">The photo that is inspected is the frame you see here, at full camera size.</p>
  {% else %}
@@ -136,6 +136,7 @@ PAGE = """<!doctype html><html><head><meta charset="utf-8">
    <b>Fabric</b><span>{{ fabric }}</span>
    <b>Scale</b><span>{{ ppm }} px/mm &middot; {% if r.uncalibrated %}not calibrated{% else %}calibrated (ruler photo){% endif %}</span>
    <b>Camera frame</b><span>{% if r.input_size %}{{ r.input_size[0] }} &times; {{ r.input_size[1] }} px{% else %}-{% endif %}</span>
+   <b>Area inspected</b><span>{% if r.crop %}{{ r.crop.size[0] }} &times; {{ r.crop.size[1] }} px, at x {{ r.crop.px[0] }}, y {{ r.crop.px[1] }}{% if r.crop.small %} (small area){% else %}{% endif %}{% else %}whole photo{% endif %}</span>
    <b>Model</b><span>{{ info.model }} &middot; confidence &ge; {{ info.conf }}</span>
    <b>Inference</b><span>{{ r.timings.get('detect', '-') }} ms</span>
    <b>Units</b><span>area in mm&sup2;, width and height in mm</span></div></div>
@@ -185,9 +186,9 @@ PAGE = """<!doctype html><html><head><meta charset="utf-8">
  </div>
 </main>
 {% else %}<main><div class="card" style="grid-column:1/-1">Upload a photo or press <b>Capture from camera</b>.</div></main>{% endif %}
-<div style="padding:0 16px 16px"><div class="card"><h3>Recent inspections</h3><table>
+<div style="padding:0 16px 16px"><div class="card"><h3>Recent inspections <a href="{{ url_for('log_page') }}" style="font-size:13px;color:#8ab4f8;margin-left:10px">Full log</a></h3><p class="mut">Click a time to open that inspection's report.</p><table>
  <tr><th>Time</th><th>Verdict</th><th>Quality</th><th>Defects</th><th>Total ms</th><th>Operator</th></tr>
- {% for h in history %}<tr><td>{{ h.ts }}</td><td>{{ h.verdict }}</td><td>{{ h.q if h.q is not none else '-' }}</td><td>{{ h.n }}</td><td>{{ h.ms }}</td><td>{{ h.label or '' }}</td></tr>{% endfor %}
+ {% for h in history %}<tr><td><a href="{{ url_for('report', rid=h.id) }}" style="color:#8ab4f8">{{ h.ts }}</a></td><td>{{ h.verdict }}</td><td>{{ h.q if h.q is not none else '-' }}</td><td>{{ h.n }}</td><td>{{ h.ms }}</td><td>{{ h.label or '' }}</td></tr>{% endfor %}
 </table></div></div></body></html>"""
 
 
@@ -206,15 +207,15 @@ def history(limit=10):
         return []
     con = sqlite3.connect(db)
     try:
-        rows = con.execute("SELECT ts, verdict, findings, timings, operator_label, quality FROM fabric_inspections "
+        rows = con.execute("SELECT rowid, ts, verdict, findings, timings, operator_label, quality FROM fabric_inspections "
                            "ORDER BY rowid DESC LIMIT ?", (limit,)).fetchall()
     except sqlite3.OperationalError:     # table not created yet
         rows = []
     con.close()
     out = []
-    for ts, v, fnd, tm, lab, q in rows:
+    for rid, ts, v, fnd, tm, lab, q in rows:
         t = json.loads(tm or "{}")
-        out.append({"ts": ts, "verdict": v, "n": len(json.loads(fnd or "[]")),
+        out.append({"id": rid, "ts": ts, "verdict": v, "n": len(json.loads(fnd or "[]")),
                     "ms": t.get("total", t.get("to_verdict", "-")), "label": lab,
                     "q": int(q) if q not in (None, "") else None})
     return out
@@ -327,39 +328,270 @@ def index():
                                      "REJECT": fq.CEILING["REJECT"]})
 
 
+def _read_source():
+    """The photo for this request: live frame, USB camera, or uploaded file."""
+    if request.form.get("source") == "live" or (request.form.get("source") == "camera" and LIVE.running):
+        img = LIVE.snapshot()
+        if img is None:
+            raise ValueError("Start the live view and wait for the picture first.")
+    elif request.form.get("source") == "camera":
+        img = grab_camera(fpipe.CFG.get("camera", {}).get("usb_index", 0))
+    else:
+        f = request.files.get("photo")
+        if not f or not f.filename:
+            raise ValueError("Choose a photo first.")
+        img = cv2.imdecode(np.frombuffer(f.read(), np.uint8), cv2.IMREAD_COLOR)
+        if img is None:
+            raise ValueError("That file is not a readable image.")
+    return img
+
+
+def _run_inspection(img, crop_frac=None):
+    with LOCK:
+        rec = fpipe.inspect(fab(), img, crop_frac=crop_frac)
+        fpipe.advise(rec)
+    if STATE["guidance"] is None:
+        STATE["guidance"] = fa.load_guidance()
+    STATE["action"] = (None if rec["verdict"] == fpipe.INVALID else
+                       fa.structured_action(rec["findings"], rec["verdict"], STATE["guidance"],
+                                            rec.get("uncalibrated", False)))
+    if rec.get("anomaly", {}).get("flagged") and STATE["action"]:
+        STATE["action"]["notes"].insert(0, "Flagged by the second-opinion model only (detector found no defect): "
+                                           "confirm by eye.")
+    STATE["rec"] = rec
+    STATE["label"] = None
+
+
 @app.post("/inspect")
 def do_inspect():
     STATE["error"] = None
     try:
-        if request.form.get("source") == "live" or (request.form.get("source") == "camera" and LIVE.running):
-            img = LIVE.snapshot()
-            if img is None:
-                raise ValueError("Start the live view and wait for the picture first.")
-        elif request.form.get("source") == "camera":
-            img = grab_camera(fpipe.CFG.get("camera", {}).get("usb_index", 0))
-        else:
-            f = request.files.get("photo")
-            if not f or not f.filename:
-                raise ValueError("Choose a photo first.")
-            img = cv2.imdecode(np.frombuffer(f.read(), np.uint8), cv2.IMREAD_COLOR)
-            if img is None:
-                raise ValueError("That file is not a readable image.")
-        with LOCK:
-            rec = fpipe.inspect(fab(), img)
-            fpipe.advise(rec)
-        if STATE["guidance"] is None:
-            STATE["guidance"] = fa.load_guidance()
-        STATE["action"] = (None if rec["verdict"] == fpipe.INVALID else
-                           fa.structured_action(rec["findings"], rec["verdict"], STATE["guidance"],
-                                                rec.get("uncalibrated", False)))
-        if rec.get("anomaly", {}).get("flagged") and STATE["action"]:
-            STATE["action"]["notes"].insert(0, "Flagged by the second-opinion model only (detector found no defect): "
-                                               "confirm by eye.")
-        STATE["rec"] = rec
-        STATE["label"] = None
+        _run_inspection(_read_source())
     except Exception as e:               # show the problem on the page instead of a 500
         STATE["error"] = str(e)
     return redirect(url_for("index"))
+
+
+def _preview(img):
+    """The picture the rectangle is drawn on: straightened and cut like the pipeline does, before the operator's crop."""
+    c = fpipe.FAB["fabrics"][fab()]
+    return fpipe.fp.crop_image(fcal.apply(img, c), c.get("crop"))
+
+
+@app.post("/select")
+def select_area():
+    """Step 1 of every inspection: take the photo, then let the operator draw the area to check."""
+    STATE["error"] = None
+    try:
+        STATE["pending"] = _read_source()
+    except Exception as e:
+        STATE["error"] = str(e)
+        return redirect(url_for("index"))
+    h, w = _preview(STATE["pending"]).shape[:2]
+    return render_template_string(SELECT_PAGE, fabric=fab(), w=w, h=h, error=None, t=int(time.time()))
+
+
+@app.get("/select/img")
+def select_img():
+    if STATE["pending"] is None:
+        return Response(status=404)
+    ok, buf = cv2.imencode(".jpg", _fit(_preview(STATE["pending"]), 1400), [cv2.IMWRITE_JPEG_QUALITY, 88])
+    return Response(buf.tobytes(), mimetype="image/jpeg", headers={"Cache-Control": "no-store"})
+
+
+@app.post("/inspect/area")
+def inspect_area():
+    STATE["error"] = None
+    img = STATE["pending"]
+    try:
+        if img is None:
+            raise ValueError("No photo waiting. Choose or capture a photo first.")
+        frac = None
+        if request.form.get("whole") is None:
+            vals = [request.form.get(k, "") for k in ("fx", "fy", "fw", "fh")]
+            if not all(vals):
+                raise ValueError("Draw a rectangle on the photo first, or press Inspect whole photo.")
+            frac = tuple(float(v) for v in vals)
+        _run_inspection(img, frac)
+        STATE["pending"] = None
+    except Exception as e:
+        STATE["error"] = str(e)
+    return redirect(url_for("index"))
+
+
+SELECT_PAGE = """<!doctype html><html><head><meta charset="utf-8"><title>Select area</title>
+<style>body{background:#111;color:#eee;font-family:system-ui,Segoe UI,Arial;margin:0;padding:16px}
+.btn,button{background:#2e7d32;color:#fff;border:0;border-radius:6px;padding:10px 16px;font-size:15px;cursor:pointer}
+.alt{background:#444}#wrap{position:relative;display:inline-block;touch-action:none;user-select:none}
+#img{display:block;max-width:100%;height:auto;max-height:78vh}
+#box{position:absolute;border:2px solid #ffd54f;background:rgba(255,213,79,.15);display:none;pointer-events:none}
+.mut{color:#aaa;font-size:13px}</style></head><body>
+<h2>Select the area to inspect &middot; {{ fabric }}</h2>
+<p class="mut">Drag a rectangle on the photo. Each photo has its own area; nothing is remembered for the next one.</p>
+<div id="wrap"><img id="img" src="{{ url_for('select_img') }}?t={{ t }}" alt="photo"><div id="box"></div></div>
+<form method="post" action="{{ url_for('inspect_area') }}" style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+ <input type="hidden" name="fx"><input type="hidden" name="fy"><input type="hidden" name="fw"><input type="hidden" name="fh">
+ <button id="go" disabled>Inspect selected area</button>
+ <button class="alt" name="whole" value="1">Inspect whole photo</button>
+ <a class="btn alt" href="{{ url_for('index') }}" style="text-decoration:none">Cancel</a>
+ <span id="info" class="mut">Photo {{ w }} &times; {{ h }} px</span></form>
+<script>
+const img=document.getElementById('img'),box=document.getElementById('box'),wrap=document.getElementById('wrap'),go=document.getElementById('go'),info=document.getElementById('info');
+const f=n=>document.getElementsByName(n)[0];let s=null;
+function pt(e){const r=img.getBoundingClientRect();return[Math.min(r.width,Math.max(0,e.clientX-r.left)),Math.min(r.height,Math.max(0,e.clientY-r.top)),r]}
+wrap.addEventListener('pointerdown',e=>{const[x,y]=pt(e);s=[x,y];wrap.setPointerCapture(e.pointerId);box.style.display='block';draw(x,y)});
+wrap.addEventListener('pointermove',e=>{if(s){const[x,y]=pt(e);draw(x,y)}});
+wrap.addEventListener('pointerup',e=>{s=null});
+function draw(x,y){const[r0,r1,r]=pt({clientX:0,clientY:0});const l=Math.min(s[0],x),t=Math.min(s[1],y),w=Math.abs(x-s[0]),h=Math.abs(y-s[1]);
+ Object.assign(box.style,{left:l+'px',top:t+'px',width:w+'px',height:h+'px'});
+ f('fx').value=(l/r.width).toFixed(4);f('fy').value=(t/r.height).toFixed(4);f('fw').value=(w/r.width).toFixed(4);f('fh').value=(h/r.height).toFixed(4);
+ const pw=Math.round(w/r.width*{{ w }}),ph=Math.round(h/r.height*{{ h }});go.disabled=pw<64||ph<64;
+ info.textContent='Selected '+pw+' \u00d7 '+ph+' px'+((pw<{{ w }}/2||ph<{{ h }}/2)?' (small area: detection may be less reliable)':'')}
+</script></body></html>"""
+
+
+# ------------------------------------------------------------------ report for one logged inspection
+
+def severity_reason(f, rules):
+    lo, hi = rules["low_max_mm2"], rules["medium_max_mm2"]
+    a = f.get("area_mm2")
+    if a is None:
+        return ""
+    if f["severity"] == "Low":
+        return "area %s mm\u00b2 is under %s mm\u00b2" % (a, lo)
+    if f["severity"] == "Medium":
+        return "area %s mm\u00b2 is between %s and %s mm\u00b2" % (a, lo, hi)
+    return "area %s mm\u00b2 is %s mm\u00b2 or more" % (a, hi)
+
+
+def defect_summary(n, f, rules, guidance):
+    """One plain summary per logged defect: what, how big, where, how sure, why that severity, what to do."""
+    t = f.get("type", "Defect")
+    g = guidance["defects"].get(t, guidance["default"])
+    where = "%s of the area inspected (about %s mm across, %s mm down)" % (f.get("zone", "-"), f.get("x_mm", "-"), f.get("y_mm", "-"))
+    if t == "Pattern gap":
+        size = "a place where a printed motif seems to be missing"
+        sev = "Pattern gaps are a hint only: they can raise PASS to REVIEW, never more."
+    elif t == "Anomaly":
+        size = "an area the second-opinion model finds unusual"
+        sev = "The second opinion can raise PASS to REVIEW, never more."
+    else:
+        dims = ""
+        if f.get("width_mm") is not None:
+            dims = ", %s \u00d7 %s mm" % (f["width_mm"], f["height_mm"])
+        size = "%s mm\u00b2%s" % (f.get("area_mm2", "-"), dims)
+        sev = "%s severity because the %s." % (f["severity"], severity_reason(f, rules))
+    conf = ("%d%%" % round(100 * f["confidence"])) if f.get("confidence") is not None else "not given"
+    return {"n": n, "type": t, "severity": f["severity"], "size": size, "where": where, "confidence": conf,
+            "why": sev, "check": g["check"], "cause": g["likely_cause"],
+            "route": g["route"].get(f["severity"], guidance["default"]["route"][f["severity"]])}
+
+
+def load_inspection(rid):
+    db = Path(fpipe.CFG["paths"]["db"])
+    if not db.exists():
+        return None
+    con = sqlite3.connect(db)
+    try:
+        row = con.execute("SELECT rowid, ts, fabric, verdict, findings, advice, timings, quality, operator_label, reason, note, "
+                          "corrected, extra FROM fabric_inspections WHERE rowid=?", (rid,)).fetchone()
+    except sqlite3.OperationalError:
+        row = None
+    con.close()
+    if not row:
+        return None
+    k = ("id", "ts", "fabric", "verdict", "findings", "advice", "timings", "quality", "label", "reason", "note", "corrected", "extra")
+    d = dict(zip(k, row))
+    for key in ("findings", "advice", "timings", "extra"):
+        d[key] = json.loads(d[key]) if d[key] else ({} if key != "findings" else [])
+    d["findings"] = d["findings"] or []
+    return d
+
+
+@app.get("/report/<int:rid>")
+def report(rid):
+    d = load_inspection(rid)
+    if d is None:
+        return Response("No such inspection.", status=404)
+    if STATE["guidance"] is None:
+        STATE["guidance"] = fa.load_guidance()
+    rules = fpipe.FAB["rules"]
+    ex = d["extra"] or {}
+    rec = {"verdict": d["verdict"], "findings": d["findings"], "anomaly": ex.get("anomaly"),
+           "invalid_reasons": ex.get("invalid_reasons") or []}
+    why = why_verdict(rec)
+    defects = [defect_summary(i, f, rules, STATE["guidance"]) for i, f in enumerate(d["findings"], 1)]
+    action = None
+    if d["verdict"] != fpipe.INVALID:
+        action = fa.structured_action(d["findings"], d["verdict"], STATE["guidance"], bool(ex.get("uncalibrated")))
+    rd = fpipe.REPORT_DIR
+    return render_template_string(REPORT_PAGE, d=d, why=why, defects=defects, action=action, ex=ex,
+                                  counts=category_counts(rec), has_img=(rd / ("%d.png" % rid)).exists(),
+                                  has_hm=(rd / ("%d_heatmap.png" % rid)).exists(), ppm=fpipe.FAB["fabrics"].get(d["fabric"], {}).get("px_per_mm", "-"))
+
+
+@app.get("/report/<int:rid>/<kind>.png")
+def report_img(rid, kind):
+    name = "%d.png" % rid if kind == "picture" else "%d_heatmap.png" % rid
+    p = (fpipe.REPORT_DIR / name).resolve()
+    if kind not in ("picture", "heatmap") or not p.exists():
+        return Response(status=404)
+    return send_file(p, mimetype="image/png")
+
+
+@app.get("/log")
+def log_page():
+    return render_template_string(LOG_PAGE, rows=history(300))
+
+
+LOG_PAGE = """<!doctype html><html><head><meta charset="utf-8"><title>Inspection log</title>
+<style>body{background:#111;color:#eee;font-family:system-ui,Segoe UI,Arial;margin:0;padding:16px}a{color:#8ab4f8}
+table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid #333;padding:6px 10px;text-align:left}</style></head><body>
+<p><a href="{{ url_for('index') }}">&larr; Dashboard</a></p><h2>Inspection log</h2>
+<table><tr><th>#</th><th>Time</th><th>Verdict</th><th>Quality</th><th>Defects</th><th>Total ms</th><th>Operator</th></tr>
+{% for h in rows %}<tr><td>{{ h.id }}</td><td><a href="{{ url_for('report', rid=h.id) }}">{{ h.ts }}</a></td><td>{{ h.verdict }}</td>
+<td>{{ h.q if h.q is not none else '-' }}</td><td>{{ h.n }}</td><td>{{ h.ms }}</td><td>{{ h.label or '' }}</td></tr>{% endfor %}
+</table></body></html>"""
+
+REPORT_PAGE = """<!doctype html><html><head><meta charset="utf-8"><title>Inspection report #{{ d.id }}</title>
+<style>body{background:#111;color:#eee;font-family:system-ui,Segoe UI,Arial;margin:0;padding:16px;max-width:1100px}a{color:#8ab4f8}
+.card{background:#1b1b1b;border-radius:8px;padding:14px;margin:12px 0}h2,h3{margin:0 0 8px}.mut{color:#aaa;font-size:13px}
+.v{display:inline-block;padding:4px 14px;border-radius:6px;font-weight:bold;font-size:18px}
+.PASS{background:#1f6b3a}.REVIEW{background:#8a6d00}.REWORK{background:#a35200}.REJECT{background:#a11}.INVALID{background:#555}
+.kv{display:grid;grid-template-columns:170px 1fr;gap:4px 12px}img{max-width:100%;border-radius:6px}
+.d{border-left:4px solid #666;padding:6px 12px;margin:10px 0}.Low{border-color:#0c0}.Medium{border-color:#ff8c00}.High{border-color:#f33}
+button{background:#444;color:#fff;border:0;border-radius:6px;padding:8px 14px;cursor:pointer}
+@media print{body{background:#fff;color:#000}.card{background:#fff;border:1px solid #999}.noprint{display:none}a{color:#000}}</style></head><body>
+<p class="noprint"><a href="{{ url_for('index') }}">&larr; Dashboard</a> &middot; <a href="{{ url_for('log_page') }}">Full log</a>
+ &middot; <button onclick="window.print()">Print / save as PDF</button></p>
+<h2>Inspection report #{{ d.id }}</h2>
+<div class="card"><span class="v {{ d.verdict }}">{{ d.verdict }}</span> <span class="mut">&nbsp;{{ d.ts }} &middot; fabric {{ d.fabric }}
+ {% if d.quality is not none %}&middot; cloth quality {{ d.quality }}{% endif %}</span>
+ <p><b>Why:</b> {{ why }}</p>
+ {% if counts %}<p><b>Defects found:</b> {{ d.findings|length }} ({{ counts }})</p>{% else %}<p><b>Defects found:</b> none</p>{% endif %}</div>
+{% if has_img %}<div class="card"><h3>Picture</h3><img src="{{ url_for('report_img', rid=d.id, kind='picture') }}" alt="inspected picture"></div>
+{% else %}<div class="card mut">No picture was kept for this inspection (it was logged before reports were added).</div>{% endif %}
+{% if has_hm %}<div class="card"><h3>Second-opinion heatmap</h3><img src="{{ url_for('report_img', rid=d.id, kind='heatmap') }}" alt="heatmap"></div>{% endif %}
+<div class="card"><h3>Summary of each defect</h3>
+{% for x in defects %}<div class="d {{ x.severity }}"><b>#{{ x.n }} {{ x.type }}</b> &middot; {{ x.severity }}<br>
+ <b>What:</b> {{ x.size }}<br><b>Where:</b> {{ x.where }}<br><b>Detector confidence:</b> {{ x.confidence }}<br>
+ <b>Why this severity:</b> {{ x.why }}<br><b>Check:</b> {{ x.check }}<br><b>Likely cause:</b> {{ x.cause }}<br><b>Route:</b> {{ x.route }}</div>
+{% else %}<p>No defect was recorded for this inspection.</p>{% endfor %}</div>
+{% if action %}<div class="card"><h3>What to do</h3><div class="kv"><b>Disposition</b><span>{{ action.disposition }}</span>
+ <b>Urgency</b><span>{{ action.urgency }}</span></div>{% for n in action.notes %}<p class="mut">{{ n }}</p>{% endfor %}</div>{% endif %}
+{% if d.advice and d.advice.source and d.advice.source != 'off' %}<div class="card"><h3>Operator actions <span class="mut">({{ d.advice.source }})</span></h3>
+ <ol>{% for x in d.advice.actions %}<li>{{ x }}</li>{% endfor %}</ol>{% if d.advice.risk %}<p><b>Risk:</b> {{ d.advice.risk }}</p>{% endif %}
+ {% if d.advice.summary %}<p class="mut">{{ d.advice.summary }}</p>{% endif %}</div>{% endif %}
+<div class="card"><h3>Measurement and timing</h3><div class="kv">
+ <b>Scale</b><span>{{ ppm }} px/mm</span>
+ <b>Camera frame</b><span>{% if ex.input_size %}{{ ex.input_size[0] }} &times; {{ ex.input_size[1] }} px{% else %}-{% endif %}</span>
+ <b>Area inspected</b><span>{% if ex.crop %}{{ ex.crop.size[0] }} &times; {{ ex.crop.size[1] }} px at x {{ ex.crop.px[0] }}, y {{ ex.crop.px[1] }}{% else %}whole photo{% endif %}</span>
+ <b>Detection</b><span>{{ d.timings.get('detect', '-') }} ms</span><b>Advice</b><span>{{ d.timings.get('llm', '-') }} ms</span>
+ <b>Total</b><span>{{ d.timings.get('total', d.timings.get('to_verdict', '-')) }} ms</span></div></div>
+{% if d.label %}<div class="card"><h3>Operator confirmation</h3><div class="kv"><b>Result</b><span>{{ d.label }}</span>
+ {% if d.corrected %}<b>Corrected verdict</b><span>{{ d.corrected }}</span>{% endif %}{% if d.reason %}<b>Reason</b><span>{{ d.reason }}</span>{% endif %}
+ {% if d.note %}<b>Note</b><span>{{ d.note }}</span>{% endif %}</div></div>{% endif %}
+</body></html>"""
 
 
 @app.post("/label")

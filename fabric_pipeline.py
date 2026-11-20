@@ -178,7 +178,7 @@ def usage_total_seconds():
     return float(total)
 
 
-def inspect(fabric=None, image=None, scorer=None, detector=None, anomaly_scorer=None):
+def inspect(fabric=None, image=None, scorer=None, detector=None, anomaly_scorer=None, crop_frac=None):
     """Everything up to the verdict. Returns the record (already logged).
     Fabrics with detector: yolo use the YOLO model; others use the anomaly heatmap."""
     fabric = fabric or FAB["fabric"]
@@ -197,6 +197,8 @@ def inspect(fabric=None, image=None, scorer=None, detector=None, anomaly_scorer=
         rec["input_size"] = [int(img.shape[1]), int(img.shape[0])]     # camera frame, before straightening
         img = fcal.apply(img, c)                       # straighten a tilted camera, if calibrated
         img = fp.crop_image(img, c.get("crop"))
+        if crop_frac:                                   # operator-drawn rectangle for this photo only
+            img, rec["crop"] = _crop_by_fraction(img, crop_frac)
         hm_overlay = None
         if c.get("detector", "anomaly") == "yolo":
             dets = (detector or get_detector(fabric)).detect(img);   lap("detect")
@@ -234,6 +236,23 @@ def inspect(fabric=None, image=None, scorer=None, detector=None, anomaly_scorer=
     rec["timings"] = timings
     rec["id"] = log(rec)
     return rec
+
+
+MIN_CROP_PX = 64
+
+
+def _crop_by_fraction(img, frac):
+    """frac = (x, y, w, h) as fractions 0..1 of the straightened picture. Returns the cut picture and a record
+    {"frac", "px": [x, y, w, h], "size": [w, h], "small": bool}. A rectangle that is too small is refused."""
+    H, W = img.shape[:2]
+    fx, fy, fw, fh = [min(1.0, max(0.0, float(v))) for v in frac]
+    x, y = int(round(fx * W)), int(round(fy * H))
+    w, h = min(W - x, int(round(fw * W))), min(H - y, int(round(fh * H)))
+    if w < MIN_CROP_PX or h < MIN_CROP_PX:
+        raise ValueError("The selected area is too small. Draw a larger rectangle.")
+    info = {"frac": [round(v, 4) for v in (fx, fy, fw, fh)], "px": [x, y, w, h], "size": [w, h],
+            "small": bool(w < 0.5 * W or h < 0.5 * H)}
+    return img[y:y + h, x:x + w], info
 
 
 _COL = {"Low": (0, 200, 0), "Medium": (0, 140, 255), "High": (0, 0, 255)}
