@@ -96,9 +96,13 @@ PAGE = """<!doctype html><html><head><meta charset="utf-8">
  <div class="stat"><b>{{ stats.rate }}</b><span>Pass rate today</span></div>
 </div>
 <div style="padding:12px 16px 0"><div class="card"><h3>Live camera
-  <span class="tag">{% if live.running %}on{% else %}off{% endif %}</span>
+  <span class="tag">{% if live.running and not live.ready %}starting{% elif live.running %}on{% else %}off{% endif %}</span>
   {% if live.running and live.size %}<span class="tag">{{ live.size[0] }} &times; {{ live.size[1] }}</span>{% endif %}</h3>
- {% if live.running %}
+ {% if live.running and not live.ready %}
+  <p class="mut">Starting the camera. This can take a few seconds the first time.</p>
+  <script>setTimeout(function(){location.reload()},1500)</script>
+  <form method="post" action="{{ url_for('live_stop') }}"><button class="alt">Cancel</button></form>
+ {% elif live.running %}
   <img src="{{ url_for('live_stream') }}" alt="Live camera" style="max-width:760px;width:100%">
   <div class="row" style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
    <form method="post" action="{{ url_for('select_area') }}"><button name="source" value="live">Capture &amp; select area</button></form>
@@ -662,7 +666,7 @@ def set_fabric():
 def live_start():
     LIVE.start()
     if LIVE.running:
-        LIVE.wait_frame()
+        LIVE.wait_frame(1.5)
     return redirect(url_for("index"))
 
 
@@ -746,7 +750,7 @@ __STYLE__
    <form method="post" action="{{ url_for('pattern_refs') }}" enctype="multipart/form-data" class="row" style="display:flex;gap:8px;flex-wrap:wrap">
     <input type="file" name="refs" accept="image/*" multiple>
     <button name="action" value="add">Add reference photos</button>
-    {% if live.running %}<button name="action" value="add_live" class="alt">Add current camera frame</button>{% endif %}</form>
+    {% if live.ready %}<button name="action" value="add_live" class="alt">Add current camera frame</button>{% endif %}</form>
    {% if prof %}<p class="mut">Learned from {{ prof.n_refs }} photo(s): about {{ prof.motifs|round|int }} motifs per photo, motif spacing {{ prof.spacing|round|int }} px.</p>
    {% elif refs %}<p class="mut">No regular motif grid found in the reference photos yet.</p>{% endif %}
    <div class="thumbs">{% for n in refs %}<div><img src="{{ url_for('pattern_ref_img', name=n) }}" alt="{{ n }}">
@@ -757,7 +761,7 @@ __STYLE__
     <input type="file" name="photo" accept="image/*">
     <label class="mut"><input type="checkbox" name="compare" value="1" {{ 'checked' if refs else 'disabled' }}> Also compare with the reference photos</label>
     <div class="row" style="display:flex;gap:8px;flex-wrap:wrap"><button name="source" value="upload">Check photo</button>
-     {% if live.running %}<button name="source" value="live" class="alt">Check current camera frame</button>{% else %}
+     {% if live.ready %}<button name="source" value="live" class="alt">Check current camera frame</button>{% else %}
      <span class="mut">Start the live view on the inspection page to check a camera frame.</span>{% endif %}</div></form></div>
  </div>
  <div>

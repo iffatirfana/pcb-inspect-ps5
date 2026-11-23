@@ -34,6 +34,7 @@ class YoloDetector:
                 opts.intra_op_num_threads = int(os.environ["FABRIC_ORT_THREADS"])
             self._sess = ort.InferenceSession(self.model_path, opts,
                                               providers=["CPUExecutionProvider"])
+            self._half = 'float16' in self._sess.get_inputs()[0].type
             shape = self._sess.get_inputs()[0].shape            # [1, 3, H, W] or dynamic
             h, w = shape[2], shape[3]
             self.in_h = h if isinstance(h, int) else int(imgsz)
@@ -99,7 +100,10 @@ class YoloDetector:
         h, w = bgr.shape[:2]
         x, r, left, top = self._letterbox(bgr)
         blob = cv2.cvtColor(x, cv2.COLOR_BGR2RGB).astype(np.float32).transpose(2, 0, 1)[None] / 255.0
+        if self._half:
+            blob = blob.astype(np.float16)
         out0, protos = self._sess.run(None, {self._sess.get_inputs()[0].name: blob})[:2]
+        out0, protos = out0.astype(np.float32), protos.astype(np.float32)
         o = out0[0].T                                            # [N, 4 + nc + 32]
         nc = len(self.names)
         scores = o[:, 4:4 + nc]

@@ -239,3 +239,9 @@ hardware/testboard/drc_report.txt
 results/*.png
 models/best_a2.pt
 results/reports/
+
+cam*.jpg
+kb/fabric.yaml.bak
+models/best_s.pt
+results/bench/
+results/reports/

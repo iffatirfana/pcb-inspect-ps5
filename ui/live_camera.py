@@ -42,25 +42,28 @@ def open_capture(index=0):
     return cv2.VideoCapture(index)
 
 
-def probe(cap, tries=30, discard=6, min_mean=3.0):
-    """Read a few frames; True when a real (not black) picture arrives. Returns (ok, frame)."""
-    last = None
-    for n in range(tries):
+def probe(cap, budget=6.0, discard=3, min_mean=3.0):
+    """Read frames for at most `budget` seconds; True when a real (not black) picture arrives.
+    Returns (ok, frame)."""
+    last, n, t0 = None, 0, time.time()
+    while time.time() - t0 < budget:
         ok, f = cap.read()
         if not ok or f is None:
             time.sleep(0.05)
             continue
-        if n >= discard and float(f.mean()) >= min_mean:
+        n += 1
+        if n > discard and float(f.mean()) >= min_mean:
             return True, f
         last = f
-        time.sleep(0.03)
     return False, last
 
 
 class LiveCamera:
-    def __init__(self, index=0, opener=None, stream_width=960, fps=15):
+    def __init__(self, index=0, opener=None, stream_width=None, fps=None):
         self.index, self.opener = index, opener
-        self.stream_width, self.delay = stream_width, 1.0 / fps
+        pi = sys.platform.startswith("linux")                  # smaller, slower preview keeps the Pi's CPU free for inspection
+        self.stream_width = stream_width or (640 if pi else 960)
+        self.delay = 1.0 / (fps or (10 if pi else 15))
         self._lock = threading.Lock()
         self._frame = None
         self._jpeg = None
@@ -73,22 +76,35 @@ class LiveCamera:
     def running(self):
         return self._thread is not None and self._thread.is_alive()
 
+    @property
+    def ready(self):
+        with self._lock:
+            return self._jpeg is not None
+
     def start(self):
+        """Returns at once. The camera is opened in a background thread so the page does not wait for it;
+        `ready` becomes True when the first real picture arrives, or `error` is set and `running` goes False."""
         if self.running:
             return
         self.error, self._frame, self._jpeg = None, None, None
         self._stop.clear()
+        self._thread = threading.Thread(target=self._open_and_run, daemon=True)
+        self._thread.start()
+
+    def _open_and_run(self):
         gen = iter([self.opener(self.index)]) if self.opener else candidates(self.index)
         opened = black = False
         for cap in gen:
+            if self._stop.is_set():
+                cap.release()
+                return
             if not cap.isOpened():
                 cap.release()
                 continue
             opened = True
             ok, first = probe(cap)
             if ok:
-                self._thread = threading.Thread(target=self._loop, args=(cap, first), daemon=True)
-                self._thread.start()
+                self._loop(cap, first)
                 return
             black = True
             cap.release()
@@ -128,7 +144,7 @@ class LiveCamera:
     def stop(self):
         self._stop.set()
         if self._thread is not None:
-            self._thread.join(timeout=3)
+            self._thread.join(timeout=8)
         self._thread = None
 
     def snapshot(self):
@@ -137,11 +153,14 @@ class LiveCamera:
             return None if self._frame is None else self._frame.copy()
 
     def wait_frame(self, timeout=3.0):
+        """Wait for the first picture; gives up early when the camera failed to open."""
         t = time.time()
         while time.time() - t < timeout:
             with self._lock:
                 if self._jpeg is not None:
                     return True
+            if not self.running:
+                return False
             time.sleep(0.05)
         return False
 

@@ -231,7 +231,12 @@ def test_live_camera_black_frames_gives_clear_message(client, monkeypatch):
             return True, np.zeros((480, 640, 3), np.uint8)
     cap = BlackCap()
     monkeypatch.setattr(fabric_app, "LIVE", LiveCamera(opener=lambda i: cap))
-    html = client.post("/live/start", follow_redirects=True).get_data(as_text=True)
+    client.post("/live/start")
+    for _ in range(100):                                  # the camera opens in the background; wait for it to give up
+        if not fabric_app.LIVE.running:
+            break
+        __import__("time").sleep(0.1)
+    html = client.get("/").get_data(as_text=True)
     assert "sends a black picture" in html and cap.released
 
 
@@ -294,3 +299,20 @@ def test_uploaded_photo_is_not_straightened_but_camera_photo_is(client, monkeypa
     monkeypatch.setattr(fabric_app, "grab_camera", lambda i: cv2.imdecode(np.frombuffer(photo(), np.uint8), 1))
     client.post("/inspect", data={"source": "camera"})
     assert fabric_app.STATE["rec"]["calibration_applied"] is True
+
+
+def test_live_start_does_not_wait_for_a_slow_camera(client, monkeypatch):
+    import time as _t
+    from ui.live_camera import LiveCamera
+
+    class SlowCap(FakeCap):
+        def isOpened(self):
+            _t.sleep(2.5)
+            return True
+    live = LiveCamera(opener=lambda i: SlowCap(), fps=100)
+    monkeypatch.setattr(fabric_app, "LIVE", live)
+    t = _t.time()
+    html = client.post("/live/start", follow_redirects=True).get_data(as_text=True)
+    assert _t.time() - t < 2.4 and "Starting the camera" in html
+    assert live.wait_frame(6) and live.ready
+    live.stop()
