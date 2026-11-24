@@ -1,7 +1,7 @@
 """Real Llama backend for llm/advisor.py, using an ExecuTorch-exported .pte.
 
 Uses the ExecuTorch C++ `llama_main` runner (built on the Pi from the
-ExecuTorch v1.5.1 source, XNNPACK on). Same interface as MockBackend:
+ExecuTorch v1.5.1 source, XNNPACK on). Same interface as Backend:
     generate(prompt) -> str
 
 Files (download once from the private HF repo, see download_models()):

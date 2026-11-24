@@ -89,7 +89,6 @@ team was also tested; alone it flags too many regions on clean cloth, so it is n
 | `kb/fabric.yaml` | fabric settings, thresholds (including the anomaly pixel threshold and 1.5% rule), SOP text per verdict |
 | `tests/` | unit tests |
 
-The repository also contains an earlier PCB inspection profile (`pipeline.py`, `ui/app.py`, `kb/boards`); it is not part of this entry.
 
 ## Run on a laptop (no Llama needed; a mock advisor is used)
 

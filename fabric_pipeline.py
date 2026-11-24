@@ -1,4 +1,4 @@
-"""Fabric inspection pipeline (separate from the PCB pipeline.py; shares camera, quality gate, LLM backend, DB).
+"""Fabric inspection pipeline (shares camera, quality gate, LLM backend, DB).
 
   capture -> quality gate -> crop -> anomaly heatmap -> findings (mm) -> rules -> VERDICT
           -> Llama advice (afterwards; never changes the verdict) -> SQLite log

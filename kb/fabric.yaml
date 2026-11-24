@@ -57,7 +57,7 @@ rules:
   medium_max_mm2: 10.0
   max_defects_for_review: 3
 
-# Overrides config.yaml quality gate for fabric (PCB value 40 would reject most of our fabric photos:
+# Overrides config.yaml quality gate for fabric (the default of 40 would reject most of our fabric photos:
 # measured median sharpness of the blue set is about 38). TUNE after the final photo set.
 quality:
   min_sharpness: 12
