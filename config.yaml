@@ -20,8 +20,6 @@ quality:               # image-quality gate -> INVALID_CAPTURE when not met
   min_brightness: 35
   max_brightness: 225
   max_clipped: 0.10      # fraction of over/under-exposed pixels
-  min_inliers: 40        # alignment matches
-  max_reproj_px: 3.0     # alignment error
 
 llm:
   enabled: true      # false = no Llama advice (rules only); true = Llama writes the operator note

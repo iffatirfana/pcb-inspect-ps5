@@ -1,9 +1,8 @@
 """Image-quality gate: refuse to give a verdict on a bad photo.
 
-Two checks, both cheap:
-  check_capture(img)      sharpness, exposure, clipping   (before alignment)
-  check_alignment(stats)  enough matches, low reprojection error (after alignment)
-Any failure -> board verdict INVALID_CAPTURE (operator re-takes the photo).
+One cheap check:
+  check_capture(img)      sharpness, exposure, clipping
+Any failure -> verdict INVALID_CAPTURE (operator re-takes the photo).
 Limits live in config.yaml -> quality.
 """
 import cv2
@@ -11,8 +10,7 @@ import numpy as np
 
 DEFAULTS = {"min_sharpness": 40.0,        # variance of Laplacian at 1024 px width
             "min_brightness": 35, "max_brightness": 225,
-            "max_clipped": 0.10,          # fraction of pixels at 0-4 or 251-255
-            "min_inliers": 40, "max_reproj_px": 3.0}
+            "max_clipped": 0.10}          # fraction of pixels at 0-4 or 251-255
 
 
 def _limits(cfg):
@@ -44,13 +42,3 @@ def check_capture(img, cfg=None):
         reasons.append(f"{m['clipped']:.0%} of pixels over/under-exposed: check lighting/glare")
     return not reasons, reasons, m
 
-
-def check_alignment(stats, cfg=None):
-    """stats from Aligner.align(). Returns (ok, reasons)."""
-    lim, reasons = _limits(cfg), []
-    if stats.get("inliers", 0) < lim["min_inliers"]:
-        reasons.append(f"board not recognised ({stats.get('inliers', 0)} matches): "
-                       "wrong board selected or board not in the fixture")
-    if stats.get("reproj_err_px", 0) > lim["max_reproj_px"]:
-        reasons.append(f"poor alignment ({stats['reproj_err_px']} px): re-seat the board")
-    return not reasons, reasons

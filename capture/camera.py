@@ -1,4 +1,4 @@
-"""Stage 0: capture a board image.
+"""Stage 0: capture a fabric image.
 
 source: auto    Picamera2 (HQ Camera) if present, else a file (default)
         picamera2 Picamera2 only

@@ -27,10 +27,10 @@ Vision runs on the Pi CPU (onnxruntime). Llama runs on the Arm CPU through Execu
 
 | Measurement | Value |
 | --- | --- |
-| Detector time | 134-200 ms |
-| Photo to verdict | 0.31-0.43 s |
-| Total with advice, persistent Llama runner | about 2.4 s (first call 4.6 s includes model load) |
-| Peak memory | Python 177.7 MB + Llama runner 773.8 MB |
+| Detector time | 583 ms (about 1.7 FPS, 960 px input) |
+| Photo to verdict | 0.99 s median |
+| Llama advice, persistent runner | 7 to 14 s per reply (16 tokens per second) |
+| Peak memory | Python 226 MB + Llama runner 731 MB (0.96 GB of 16 GB) |
 | False alarms at confidence 0.5 | 0 of 71 normal photos |
 | Hole recall at confidence 0.5 | 12 of 15 |
 | Thread (Line) recall at confidence 0.5, detector alone | 2 of 6 (weak) |
