@@ -150,7 +150,9 @@ class ExecuTorchBackend(Backend):
                         (o["model_load_end_ms"] - o["model_load_start_ms"]) / 1000, 2)
             except Exception:
                 pass
-        return out.strip()
+        lines = [x.strip() for x in out.strip().splitlines() if x.strip()]
+        i = next((k for k, x in enumerate(lines) if x.startswith("Risk")), 0)
+        return "\n".join(lines[i:i + 3])
 
     @staticmethod
     def _parse_stats(text):

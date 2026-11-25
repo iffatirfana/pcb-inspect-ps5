@@ -125,7 +125,7 @@ def capture():
 
 def _db():
     Path(CFG["paths"]["db"]).parent.mkdir(parents=True, exist_ok=True)
-    con = sqlite3.connect(CFG["paths"]["db"])
+    con = sqlite3.connect(CFG["paths"]["db"], timeout=30); con.execute("PRAGMA journal_mode=WAL"); con.execute("PRAGMA synchronous=NORMAL")
     con.execute("""CREATE TABLE IF NOT EXISTS fabric_inspections(
         ts TEXT, fabric TEXT, verdict TEXT, findings TEXT, advice TEXT, timings TEXT,
         operator_label TEXT)""")
@@ -311,7 +311,7 @@ def _draw(img, findings, ppm, path="results/last_fabric.png"):
         cv2.rectangle(out, (tx, ty - tht - 6), (tx + tw + 8, ty + base + 2), (20, 20, 20), -1)
         cv2.putText(out, label, (tx + 4, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.7 * sc, col, 2, cv2.LINE_AA)
     Path(path).parent.mkdir(parents=True, exist_ok=True)
-    cv2.imwrite(path, out)
+    cv2.imwrite(path, out, [cv2.IMWRITE_PNG_COMPRESSION, 1])
     return path
 
 
@@ -326,7 +326,7 @@ def _draw_heatmap(img, hm, threshold, path="results/last_fabric_heatmap.png"):
     contours, _ = cv2.findContours((hm > threshold).astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     cv2.drawContours(out, contours, -1, (255, 255, 255), 1)
     Path(path).parent.mkdir(parents=True, exist_ok=True)
-    cv2.imwrite(path, out)
+    cv2.imwrite(path, out, [cv2.IMWRITE_PNG_COMPRESSION, 1])
     return path
 
 

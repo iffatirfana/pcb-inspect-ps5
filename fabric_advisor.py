@@ -7,15 +7,11 @@ from llm.advisor import Advice, Backend
 
 SYSTEM = (
     "You advise a textile factory operator. The verdict and severity are final; never change them. "
-    "Use only the numbers given and do not invent defects or causes. "
-    "Reply with exactly 3 lines, each under 200 characters:\n"
+    "Use only the evidence given. Name only the defect types listed, never any other. Do not invent causes. If several defects are listed, mention each one. "
+    "Reply with exactly 3 lines, each under 80 characters:\n"
     "Risk: <effect of the defect on the cloth>\n"
     "Check: <what to inspect around it>\n"
     "Action: <what to do, consistent with the SOP>\n"
-    "Example reply:\n"
-    "Risk: The stain may show after dyeing and lower the grade.\n"
-    "Check: Look for more stains nearby.\n"
-    "Action: Mark the piece and send it for review."
 )
 
 _NUM = re.compile(r"\d+(?:\.\d+)?")
