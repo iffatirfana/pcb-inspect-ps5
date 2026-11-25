@@ -65,7 +65,7 @@ It works only on a regular repeating print. A reference-photo comparison was tri
 flagged 6 of 14 clean photos because the cloth layout differs between areas. A DINOv2 Siamese model from the
 team was also tested; alone it flags too many regions on clean cloth, so it is not in the pipeline.
 
-## Limitations (read these)
+## Limitations
 
 - The anomaly second opinion is trained on normal blue denim only and flags about 2 in 10 held-out normal photos for a quick manual check. It is advisory: it can raise PASS to REVIEW and nothing more.
 - Trained on blue denim only. A yellow patterned cloth gave false Holes, and on grey cloth and in shadows the anomaly second opinion flags regions (REVIEW only); other fabrics need new data or a bank built from clean photos of that fabric.
@@ -134,4 +134,4 @@ The Llama files are fetched with `llm.executorch_backend.download_models()` from
 
 ## Team
 
-Person 1 (detector, rule engine, Pi deployment, Llama stage, dashboard) and Person 2 (anomaly detector). Faculty Mentor: Aathilakshmi, Associate Professor, ECE department.
+Iffat Irfana M, I.G Geethashri and Harini V (detector, rule engine, Pi deployment, Llama stage, dashboard, anomaly detector). Faculty Mentor: Aathilakshmi, Associate Professor, ECE department.
